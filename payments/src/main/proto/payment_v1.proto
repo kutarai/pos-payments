@@ -1,0 +1,209 @@
+syntax = "proto3";
+
+package synergy.payment.v1;
+
+option csharp_namespace = "SynergySwitch.Protos.Payment";
+option java_package = "com.synergy.payments.grpc.payment";
+option java_multiple_files = true;
+
+// ISO 20022 AcceptorAuthorisation mapped to gRPC.
+// Field names follow ISO 20022 caaa.001/caaa.002 semantics.
+service PaymentService {
+  // AcceptorAuthorisationRequest (caaa.001) → AcceptorAuthorisationResponse (caaa.002)
+  rpc Authorise(AcceptorAuthorisationRequest) returns (AcceptorAuthorisationResponse);
+
+  // EMVco QR Payment: terminal registers a QR payment and streams status updates.
+  // Terminal opens the stream; switch sends PENDING confirmation, then CLAIMED on payment.
+  // If terminal closes the stream (timeout), switch marks payment as TIMED_OUT.
+  rpc WaitForQrPayment(QrPaymentRequest) returns (stream QrPaymentUpdate);
+
+  // Push-initiated mobile money: switch sends a payment request to the customer's wallet
+  // and streams status updates back to the terminal.
+  rpc InitiateMobileMoneyPayment(MobileMoneyPaymentRequest) returns (stream MobileMoneyPaymentUpdate);
+}
+
+// ─── QR Payment ──────────────────────────────────────────────────────
+
+message QrPaymentRequest {
+  string terminal_id = 1;
+  string merchant_id = 2;
+  string payment_reference = 3;  // Unique reference from EMVco QR code
+  string currency = 4;           // ISO 4217 alpha-3
+  int64 amount = 5;              // Amount in minor units (cents)
+  string qr_payload = 6;         // Full EMVco TLV QR string
+  double latitude = 7;           // GPS latitude of device
+  double longitude = 8;          // GPS longitude of device
+}
+
+message QrPaymentUpdate {
+  QrPaymentStatus status = 1;
+  string authorization_code = 2;
+  string provider_reference = 3; // Payment provider's reference
+  string message = 4;            // Human-readable status message
+  string timestamp = 5;          // ISO 8601
+}
+
+enum QrPaymentStatus {
+  QR_PAYMENT_STATUS_UNSPECIFIED = 0;
+  QR_PENDING = 1;    // Registered, waiting for customer scan
+  QR_CLAIMED = 2;    // Payment received and confirmed
+  QR_TIMED_OUT = 3;  // Terminal disconnected before payment
+  QR_DECLINED = 4;   // Payment was declined by provider
+}
+
+// ─── Mobile Money Payment ──────────────────────────────────────────
+
+message MobileMoneyPaymentRequest {
+  string terminal_id = 1;
+  string merchant_id = 2;
+  string payment_reference = 3;   // Unique reference for this payment request
+  string currency = 4;            // ISO 4217 alpha-3
+  int64 amount = 5;               // Amount in minor units (cents)
+  string mobile_number = 6;       // Customer's mobile wallet number
+  double latitude = 7;            // GPS latitude of device
+  double longitude = 8;           // GPS longitude of device
+}
+
+message MobileMoneyPaymentUpdate {
+  MobileMoneyPaymentStatus status = 1;
+  string authorization_code = 2;
+  string provider_reference = 3;  // Mobile money provider's reference
+  string message = 4;             // Human-readable status message
+  string timestamp = 5;           // ISO 8601
+}
+
+enum MobileMoneyPaymentStatus {
+  MOBILE_PAYMENT_STATUS_UNSPECIFIED = 0;
+  MOBILE_PENDING = 1;     // Request sent to provider, awaiting customer confirmation
+  MOBILE_CONFIRMED = 2;   // Payment confirmed by provider
+  MOBILE_DECLINED = 3;    // Payment declined by provider
+  MOBILE_TIMED_OUT = 4;   // No response within timeout window
+}
+
+// ─── Request ────────────────────────────────────────────────────────
+
+message AcceptorAuthorisationRequest {
+  MessageHeader header = 1;
+  Environment environment = 2;
+  PaymentContext context = 3;
+  Transaction transaction = 4;
+}
+
+message MessageHeader {
+  string message_function = 1;    // AUTQ (request) or AUTP (response)
+  string protocol_version = 2;    // "14.0"
+  string exchange_id = 3;         // UUID for request/response correlation
+  string creation_date_time = 4;  // ISO 8601 timestamp
+  string initiating_party_id = 5; // Terminal ID
+}
+
+// ─── Environment ────────────────────────────────────────────────────
+
+message Environment {
+  Merchant merchant = 1;
+  PointOfInteraction poi = 2;
+  CardData card = 3;
+  CardholderAuthentication cardholder_auth = 4;
+}
+
+message Merchant {
+  string id = 1;
+  string common_name = 2;
+  string category_code = 3;       // ISO 18245 MCC
+}
+
+message PointOfInteraction {
+  string id = 1;                  // Terminal ID
+  repeated CardReadingCapability card_reading_capabilities = 2;
+  repeated CvmCapability cvm_capabilities = 3;
+}
+
+enum CardReadingCapability {
+  CARD_READING_UNSPECIFIED = 0;
+  ICC = 1;    // Contact chip
+  ECTL = 2;   // Contactless (EMV contactless)
+  MGST = 3;   // Magnetic stripe
+}
+
+enum CvmCapability {
+  CVM_UNSPECIFIED = 0;
+  NPIN = 1;   // Online encrypted PIN
+  FCPN = 2;   // Offline plaintext PIN
+  MNSG = 3;   // Signature
+  NOCV = 4;   // No CVM
+}
+
+message CardData {
+  string pan = 1;
+  string card_sequence_number = 2;  // Tag 5F34
+  string expiry_date = 3;           // YYMM from tag 5F24
+  string track2_equivalent_data = 4; // Tag 57
+}
+
+message CardholderAuthentication {
+  CvmMethod method = 1;
+  bytes encrypted_pin_block = 2;     // Hardware-encrypted PIN block
+  string pin_format = 3;            // "ISO0", "ISO1", "ISO3"
+  // X9.24-1 TDES DUKPT Key Serial Number (10 bytes) — present when the
+  // terminal used ServiceGetDukptPinBlock instead of MK/SK encryption.
+  // The switch forwards this to the HSM so it can re-derive the per-txn key.
+  bytes dukpt_ksn = 4;
+}
+
+enum CvmMethod {
+  CVM_METHOD_UNSPECIFIED = 0;
+  ONLINE_PIN = 1;
+  OFFLINE_PIN = 2;
+  SIGNATURE = 3;
+  NO_CVM_PERFORMED = 4;
+  CDCVM = 5;                        // Consumer Device CVM
+}
+
+// ─── Context ────────────────────────────────────────────────────────
+
+message PaymentContext {
+  CardDataEntryMode card_data_entry_mode = 1;
+}
+
+enum CardDataEntryMode {
+  ENTRY_MODE_UNSPECIFIED = 0;
+  CICC = 1;         // Contact chip
+  ECTL_ENTRY = 2;   // Contactless
+  MGST_ENTRY = 3;   // Magnetic stripe
+  MANU = 4;         // Manual/key-entered
+}
+
+// ─── Transaction ────────────────────────────────────────────────────
+
+message Transaction {
+  string transaction_type = 1;      // "CRDP" (Card Payment), "CSHW" (Cash Withdrawal)
+  string transaction_date_time = 2; // ISO 8601
+  string transaction_reference = 3; // Unique transaction reference
+  string currency = 4;             // ISO 4217 alpha-3 ("USD", "ZWL")
+  int64 amount = 5;                // Amount in minor units (cents)
+  bytes icc_related_data = 6;      // Raw BER-TLV concatenated EMV tag data
+}
+
+// ─── Response ───────────────────────────────────────────────────────
+
+message AcceptorAuthorisationResponse {
+  MessageHeader header = 1;
+  string transaction_reference = 2;
+  AuthorisationResult result = 3;
+  string display_message = 4;       // Message to display on terminal
+}
+
+message AuthorisationResult {
+  ResponseCode response = 1;
+  string response_reason = 2;       // Reason code (e.g. "0000", "0051")
+  string authorisation_code = 3;    // 6-digit auth code on approval
+  string emv_response_code = 4;     // Tag 8A value for EMV kernel ("3030" = approved)
+}
+
+enum ResponseCode {
+  RESPONSE_UNSPECIFIED = 0;
+  APPR = 1;   // Approved
+  DECL = 2;   // Declined
+  PRMS = 3;   // Partial approval
+  TECH = 4;   // Technical error
+}
