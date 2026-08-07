@@ -20,11 +20,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.synergy.payments.R
-import com.synergy.payments.switching.SwitchClient
 import com.synergy.payments.card.CardFlowUpdate
 import com.synergy.payments.card.CardPaymentDriver
 import com.synergy.payments.card.CardPaymentDrivers
-import com.synergy.payments.switching.SwitchIntegration
 import kotlinx.coroutines.launch
 import java.io.Serializable
 
@@ -88,16 +86,6 @@ fun CardPaymentScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-
-    // SynergySwitch gRPC integration.
-    // Set to null to use simulated offline approval.
-    val switchHost: String? = "switch.unipay.co.zw"
-    val switchPort = 3333
-    val switchIntegration = remember(switchHost) {
-        switchHost?.let { host ->
-            SwitchIntegration(SwitchClient(host, switchPort))
-        }
-    }
 
     var flowState by remember { mutableStateOf(FlowState.SELECT_NETWORK) }
     var selectedNetwork by remember { mutableStateOf<CardNetwork?>(null) }
