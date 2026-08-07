@@ -47,6 +47,17 @@ private enum class QrFlowState {
     TIMEOUT
 }
 
+/**
+ * How long a displayed QR stays payable.
+ *
+ * The clock starts when this dialog draws the code, not when the customer starts paying, and it
+ * has to cover everything they do afterwards: unlock the phone, open their wallet, authenticate —
+ * GovPay asks for a PIN — frame the code, and confirm. Thirty seconds did not cover that, so
+ * payments failed with "this QR code has expired" and worked only when the customer happened to
+ * be quick or was already part-way through.
+ */
+const val DEFAULT_QR_DISPLAY_SECONDS = 120
+
 private const val TAG = "QrPaymentDialog"
 
 @Composable
@@ -60,10 +71,11 @@ fun QrPaymentDialog(
     longitude: Double,
     switchClient: SwitchClient,
     onResult: (QrPaymentResult) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    displaySeconds: Int = DEFAULT_QR_DISPLAY_SECONDS,
 ) {
     var flowState by remember { mutableStateOf(QrFlowState.DISPLAYING_QR) }
-    var countdown by remember { mutableIntStateOf(30) }
+    var countdown by remember { mutableIntStateOf(displaySeconds) }
     val coroutineScope = rememberCoroutineScope()
     var streamJob by remember { mutableStateOf<Job?>(null) }
 
@@ -160,7 +172,7 @@ fun QrPaymentDialog(
         }
     }
 
-    // 30-second countdown timer — this is the ONLY thing that triggers TIMEOUT
+    // Countdown — this is the ONLY thing that triggers TIMEOUT
     LaunchedEffect(flowState, countdown) {
         if ((flowState == QrFlowState.DISPLAYING_QR || flowState == QrFlowState.WAITING_CONFIRMATION)
             && countdown > 0
