@@ -2,6 +2,9 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
+    // Kotlin 2.x compiles Compose through this plugin. It replaces
+    // composeOptions.kotlinCompilerExtensionVersion, which no longer exists.
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.protobuf")
 }
 
@@ -18,10 +21,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
-    kotlinOptions { jvmTarget = "1.8" }
-
     buildFeatures { compose = true }
-    composeOptions { kotlinCompilerExtensionVersion = "1.5.13" }
 
     packaging {
         resources {
@@ -29,6 +29,15 @@ android {
             excludes += "META-INF/INDEX.LIST"
             excludes += "META-INF/io.netty.versions.properties"
         }
+    }
+}
+
+// jvmTarget moved out of android.kotlinOptions in Kotlin 2.x; setting it there is an error
+// rather than a warning, which is what stopped this library configuring inside a host build
+// on a newer Kotlin.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
     }
 }
 
