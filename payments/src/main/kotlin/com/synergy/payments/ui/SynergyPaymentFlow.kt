@@ -10,6 +10,7 @@ import com.synergy.payments.card.CardPaymentDriver
 import com.synergy.payments.model.TenderCurrency
 import com.synergy.payments.model.Money
 import com.synergy.payments.switching.SwitchClient
+import com.synergy.payments.terminal.TerminalSnapshot
 
 /**
  * The whole payment, from "how would you like to pay" to a result.
@@ -31,6 +32,9 @@ import com.synergy.payments.switching.SwitchClient
  * @param convertCurrency how to value a tender given in another currency.
  * @param cardPaymentEnabled false when there is no card reader, so the card tile
  *        is offered but refuses rather than opening a flow that cannot finish.
+ * @param electronicPaymentsEnabled false when this terminal has no identity its switch would
+ *        recognise. Card, QR and mobile money are then not offered at all and only cash is;
+ *        a payment sent under no identity, or a borrowed one, settles to someone.
  */
 @Composable
 fun SynergyPaymentFlow(
@@ -40,12 +44,14 @@ fun SynergyPaymentFlow(
     currencies: List<TenderCurrency> = emptyList(),
     convertCurrency: suspend (Money, String) -> Money? = { _, _ -> null },
     cardPaymentEnabled: Boolean = true,
+    electronicPaymentsEnabled: Boolean = config.identity.isProvisioned,
     onResult: (PaymentOutcome) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val switchClient = remember(config.switchHost, config.switchPort) {
-        SwitchClient(config.switchHost, config.switchPort)
-    }
+    // Where the switch is, is the Device Owner's to say, and it may change under a running
+    // terminal. Reading it per call rather than capturing it here is what lets a re-provisioned
+    // till reach the new address without a restart.
+    val switchClient = remember { SwitchClient { config.identity.endpoint } }
 
     var screen by remember { mutableStateOf(PaymentStep.MethodSelection) }
 
@@ -63,12 +69,13 @@ fun SynergyPaymentFlow(
             paymentAmount = amount,
             // Never enter the card flow without a reader: the screen would sit
             // waiting for a card that can never be presented.
-            onCard = { if (cardPaymentEnabled) screen = PaymentStep.Card },
-            onQr = { screen = PaymentStep.Qr },
-            onMobileMoney = { screen = PaymentStep.MobileMoney },
+            onCard = { if (cardPaymentEnabled && electronicPaymentsEnabled) screen = PaymentStep.Card },
+            onQr = { if (electronicPaymentsEnabled) screen = PaymentStep.Qr },
+            onMobileMoney = { if (electronicPaymentsEnabled) screen = PaymentStep.MobileMoney },
             onCash = { screen = PaymentStep.Cash },
             onDismiss = { finish(PaymentOutcome.Cancelled) },
-            cardPaymentEnabled = cardPaymentEnabled,
+            cardPaymentEnabled = cardPaymentEnabled && electronicPaymentsEnabled,
+            electronicPaymentsEnabled = electronicPaymentsEnabled,
         )
 
         PaymentStep.Card -> CardPaymentStep(
@@ -81,8 +88,7 @@ fun SynergyPaymentFlow(
 
         PaymentStep.Qr -> QrPaymentDialog(
             amount = amount,
-            merchantId = config.merchantId,
-            terminalId = config.terminalId,
+            identity = config.identity,
             merchantName = config.merchantName,
             receiptNumber = config.receiptNumber,
             latitude = config.latitude,
@@ -105,8 +111,7 @@ fun SynergyPaymentFlow(
 
         PaymentStep.MobileMoney -> MobileMoneyPaymentDialog(
             amount = amount,
-            terminalId = config.terminalId,
-            merchantId = config.merchantId,
+            identity = config.identity,
             switchClient = switchClient,
             onResult = { result ->
                 when (result) {
@@ -152,13 +157,17 @@ fun SynergyPaymentFlow(
     }
 }
 
-/** Merchant and terminal identity, and where the switch is. */
+/**
+ * What the flow needs beyond the amount: who this terminal is, and how the shop presents itself.
+ *
+ * The identity is the Device Owner's and arrives whole — it is not restated field by field here,
+ * which is what let a caller pass a merchant id that disagreed with the one the card path used.
+ * What remains is presentation: the name printed on a QR code, the receipt it belongs to, and
+ * where the terminal is standing.
+ */
 data class PaymentConfig(
-    val merchantId: String,
-    val terminalId: String,
+    val identity: TerminalSnapshot,
     val merchantName: String,
-    val switchHost: String,
-    val switchPort: Int,
     val receiptNumber: String = "",
     val latitude: Double = 0.0,
     val longitude: Double = 0.0,

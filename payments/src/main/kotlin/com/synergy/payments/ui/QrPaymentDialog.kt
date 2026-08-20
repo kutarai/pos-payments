@@ -18,9 +18,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.synergy.payments.model.Money
 import com.synergy.payments.qr.EmvcoQrGenerator
-import com.synergy.payments.grpc.payment.QrPaymentRequest
 import com.synergy.payments.grpc.payment.QrPaymentStatus
 import com.synergy.payments.switching.SwitchClient
+import com.synergy.payments.switching.SwitchRequests
+import com.synergy.payments.terminal.TerminalSnapshot
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -52,8 +53,7 @@ private const val TAG = "QrPaymentDialog"
 @Composable
 fun QrPaymentDialog(
     amount: Money,
-    merchantId: String,
-    terminalId: String,
+    identity: TerminalSnapshot,
     merchantName: String,
     receiptNumber: String,
     latitude: Double,
@@ -75,8 +75,8 @@ fun QrPaymentDialog(
     // Generate QR data (called on first composition and on retry)
     fun generateQr() {
         val (payload, reference) = EmvcoQrGenerator.generatePayload(
-            merchantId = merchantId,
-            terminalId = terminalId,
+            merchantId = identity.merchantId.orEmpty(),
+            terminalId = identity.terminalId ?: identity.deviceId.orEmpty(),
             merchantName = merchantName,
             currency = amount.currency,
             receiptNumber = receiptNumber,
@@ -102,16 +102,15 @@ fun QrPaymentDialog(
         streamJob?.cancel()
         streamJob = coroutineScope.launch {
             try {
-                val request = QrPaymentRequest.newBuilder()
-                    .setDeviceId(terminalId)
-                    .setMerchantId(merchantId)
-                    .setPaymentReference(currentRef)
-                    .setCurrency(amount.currency)
-                    .setAmount((amount.amount * 100).toLong())
-                    .setQrPayload(currentPayload)
-                    .setLatitude(latitude)
-                    .setLongitude(longitude)
-                    .build()
+                val request = SwitchRequests.qr(
+                    identity = identity,
+                    paymentReference = currentRef,
+                    currency = amount.currency,
+                    amountMinor = (amount.amount * 100).toLong(),
+                    qrPayload = currentPayload,
+                    latitude = latitude,
+                    longitude = longitude,
+                )
 
                 Log.d(TAG, "Opening gRPC stream: ref=$currentRef")
                 val flow = switchClient.waitForQrPayment(request)

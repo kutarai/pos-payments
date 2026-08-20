@@ -16,6 +16,7 @@ import com.synergy.payments.grpc.terminal.HeartbeatResponse
 import com.synergy.payments.grpc.terminal.TerminalManagementServiceGrpc
 import com.synergy.payments.grpc.terminal.TerminalRegistrationRequest
 import com.synergy.payments.grpc.terminal.TerminalRegistrationResponse
+import com.synergy.payments.terminal.Endpoint
 import kotlinx.coroutines.flow.Flow
 import java.util.concurrent.TimeUnit
 
@@ -25,7 +26,7 @@ import java.util.concurrent.TimeUnit
  * Uses blocking stubs for card authorisation (called from EMV kernel's AIDL thread),
  * and Kotlin coroutine stubs for streaming operations (QR payments).
  */
-class SwitchClient(val host: String, val port: Int) {
+class SwitchClient(private val endpointProvider: () -> Endpoint?) {
 
     companion object {
         private const val TAG = "SwitchClient"
@@ -33,35 +34,50 @@ class SwitchClient(val host: String, val port: Int) {
         private const val MANAGEMENT_DEADLINE_SECONDS = 15L
     }
 
+    private var currentEndpoint: Endpoint? = null
+    private var currentChannel: ManagedChannel? = null
+
     /**
-     * TLS, verified against the device's trust store.
+     * The channel for the endpoint the policy names right now.
      *
-     * This channel carries card authorisations — PAN, expiry, the EMV cryptogram and the
-     * response that decides whether a customer is charged. In plaintext all of that is readable
-     * by anything between the till and the switch, and an authorisation response is forgeable
-     * by anything that can answer faster than the switch.
-     *
-     * The certificate must be one the terminal already trusts. A switch presenting a private
-     * or self-signed certificate needs that CA added as a trust anchor in the app's network
-     * security configuration — not a downgrade to plaintext.
+     * Held rather than rebuilt per call, and rebuilt rather than held forever: this was a `lazy`
+     * over a constructor argument, which pinned the first address for the life of the process. A
+     * fleet re-pointed at a new switch would have followed its policy only after a restart, which
+     * for an unattended terminal means a site visit.
      */
-    private val channel: ManagedChannel by lazy {
-        ManagedChannelBuilder.forAddress(host, port)
+    @Synchronized
+    private fun channel(): ManagedChannel {
+        val endpoint = endpointProvider()
+            ?: throw IllegalStateException("No switch endpoint configured for this terminal")
+
+        val existing = currentChannel
+        if (existing != null && endpoint == currentEndpoint && !existing.isShutdown) return existing
+
+        existing?.shutdown()
+        Log.d(TAG, "Opening channel to ${endpoint.host}:${endpoint.port}")
+
+        // TLS, verified against the device's trust store. This channel carries card
+        // authorisations — PAN, expiry, the EMV cryptogram and the response that decides whether a
+        // customer is charged. In plaintext all of that is readable by anything between the till
+        // and the switch, and an authorisation response is forgeable by anything that can answer
+        // faster than the switch.
+        return ManagedChannelBuilder.forAddress(endpoint.host, endpoint.port)
             .useTransportSecurity()
             .build()
+            .also {
+                currentChannel = it
+                currentEndpoint = endpoint
+            }
     }
 
-    private val paymentStub: PaymentServiceGrpc.PaymentServiceBlockingStub by lazy {
-        PaymentServiceGrpc.newBlockingStub(channel)
-    }
+    private fun paymentStub(): PaymentServiceGrpc.PaymentServiceBlockingStub =
+        PaymentServiceGrpc.newBlockingStub(channel())
 
-    private val paymentCoroutineStub: PaymentServiceGrpcKt.PaymentServiceCoroutineStub by lazy {
-        PaymentServiceGrpcKt.PaymentServiceCoroutineStub(channel)
-    }
+    private fun paymentCoroutineStub(): PaymentServiceGrpcKt.PaymentServiceCoroutineStub =
+        PaymentServiceGrpcKt.PaymentServiceCoroutineStub(channel())
 
-    private val terminalStub: TerminalManagementServiceGrpc.TerminalManagementServiceBlockingStub by lazy {
-        TerminalManagementServiceGrpc.newBlockingStub(channel)
-    }
+    private fun terminalStub(): TerminalManagementServiceGrpc.TerminalManagementServiceBlockingStub =
+        TerminalManagementServiceGrpc.newBlockingStub(channel())
 
     fun authorise(request: AcceptorAuthorisationRequest): AcceptorAuthorisationResponse {
         Log.d(TAG, "Sending authorisation: exchangeId=${request.header.exchangeId}")
@@ -73,7 +89,7 @@ class SwitchClient(val host: String, val port: Int) {
         //
         // Without it the RPC fails as soon as the connection does, carrying the cause, which is
         // what the UNAVAILABLE branch in SwitchIntegration was always written to expect.
-        return paymentStub
+        return paymentStub()
             .withDeadlineAfter(AUTHORISE_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .authorise(request)
     }
@@ -86,7 +102,7 @@ class SwitchClient(val host: String, val port: Int) {
      */
     fun waitForQrPayment(request: QrPaymentRequest): Flow<QrPaymentUpdate> {
         Log.d(TAG, "Opening QR payment stream: ref=${request.paymentReference}")
-        return paymentCoroutineStub.waitForQrPayment(request)
+        return paymentCoroutineStub().waitForQrPayment(request)
     }
 
     /**
@@ -97,28 +113,33 @@ class SwitchClient(val host: String, val port: Int) {
      */
     fun initiateMobileMoneyPayment(request: MobileMoneyPaymentRequest): Flow<MobileMoneyPaymentUpdate> {
         Log.d(TAG, "Opening mobile money payment stream: ref=${request.paymentReference}, mobile=${request.mobileNumber}")
-        return paymentCoroutineStub.initiateMobileMoneyPayment(request)
+        return paymentCoroutineStub().initiateMobileMoneyPayment(request)
     }
 
     fun register(request: TerminalRegistrationRequest): TerminalRegistrationResponse {
         Log.d(TAG, "Registering terminal: ${request.deviceId}")
-        return terminalStub
+        return terminalStub()
             .withDeadlineAfter(MANAGEMENT_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .register(request)
     }
 
     fun heartbeat(request: HeartbeatRequest): HeartbeatResponse {
-        return terminalStub
+        return terminalStub()
             .withDeadlineAfter(MANAGEMENT_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .heartbeat(request)
     }
 
+    @Synchronized
     fun shutdown() {
+        val open = currentChannel ?: return
         try {
-            channel.shutdown().awaitTermination(5, TimeUnit.SECONDS)
+            open.shutdown().awaitTermination(5, TimeUnit.SECONDS)
         } catch (e: Exception) {
             Log.w(TAG, "Error shutting down gRPC channel", e)
-            channel.shutdownNow()
+            open.shutdownNow()
+        } finally {
+            currentChannel = null
+            currentEndpoint = null
         }
     }
 }

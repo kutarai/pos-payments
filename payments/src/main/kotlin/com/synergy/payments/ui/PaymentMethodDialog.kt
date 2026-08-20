@@ -19,6 +19,7 @@ internal fun PaymentMethodDialog(
     onCash: () -> Unit,
     onDismiss: () -> Unit,
     cardPaymentEnabled: Boolean = true,
+    electronicPaymentsEnabled: Boolean = true,
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -56,16 +57,18 @@ internal fun PaymentMethodDialog(
                 )
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FullWidthButton("Card Payment", onClick = onCard, enabled = cardPaymentEnabled)
-                    if (!cardPaymentEnabled) {
-                        Text(
-                            text = "Card reader not connected — use another method",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                    if (electronicPaymentsEnabled) {
+                        FullWidthButton("Card Payment", onClick = onCard, enabled = cardPaymentEnabled)
+                        if (!cardPaymentEnabled) {
+                            Text(
+                                text = "Card reader not connected — use another method",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        FullWidthButton("Zim QR Payment", onClick = onQr)
+                        FullWidthButton("Mobile Money", onClick = onMobileMoney)
                     }
-                    FullWidthButton("Zim QR Payment", onClick = onQr)
-                    FullWidthButton("Mobile Money", onClick = onMobileMoney)
                     FullWidthButton("Cash Payment", onClick = onCash)
                     FullWidthButton("Cancel", onClick = onDismiss)
                 }

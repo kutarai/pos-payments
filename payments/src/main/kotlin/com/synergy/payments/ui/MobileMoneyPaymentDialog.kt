@@ -16,9 +16,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.synergy.payments.model.Money
-import com.synergy.payments.grpc.payment.MobileMoneyPaymentRequest
 import com.synergy.payments.grpc.payment.MobileMoneyPaymentStatus
 import com.synergy.payments.switching.SwitchClient
+import com.synergy.payments.switching.SwitchRequests
+import com.synergy.payments.terminal.TerminalSnapshot
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -52,8 +53,7 @@ private const val MOBILE_MONEY_TAG = "MobileMoneyDialog"
 @Composable
 fun MobileMoneyPaymentDialog(
     amount: Money,
-    terminalId: String,
-    merchantId: String,
+    identity: TerminalSnapshot,
     switchClient: SwitchClient,
     onResult: (MobileMoneyPaymentResult) -> Unit,
     onDismiss: () -> Unit
@@ -77,14 +77,15 @@ fun MobileMoneyPaymentDialog(
         streamJob?.cancel()
         streamJob = coroutineScope.launch {
             try {
-                val request = MobileMoneyPaymentRequest.newBuilder()
-                    .setDeviceId(terminalId)
-                    .setMerchantId(merchantId)
-                    .setPaymentReference(ref)
-                    .setCurrency(amount.currency)
-                    .setAmount((amount.amount * 100).toLong())
-                    .setMobileNumber(mobile)
-                    .build()
+                val request = SwitchRequests.mobileMoney(
+                    identity = identity,
+                    paymentReference = ref,
+                    currency = amount.currency,
+                    amountMinor = (amount.amount * 100).toLong(),
+                    mobileNumber = mobile,
+                    latitude = 0.0,
+                    longitude = 0.0,
+                )
 
                 Log.d(MOBILE_MONEY_TAG, "Opening gRPC stream: ref=$ref, mobile=$mobile")
                 val flow = switchClient.initiateMobileMoneyPayment(request)
