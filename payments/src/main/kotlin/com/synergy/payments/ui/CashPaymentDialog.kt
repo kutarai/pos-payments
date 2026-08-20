@@ -1,5 +1,6 @@
 package com.synergy.payments.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -95,28 +96,14 @@ internal fun CashPaymentDialog(
                         modifier = Modifier.weight(1f),
                         textStyle = LocalTextStyle.current.copy(fontSize = 20.sp)
                     )
-                    ExposedDropdownMenuBox(
+                    CurrencyPicker(
+                        selected = tenderedCurrency,
+                        currencies = currencies,
                         expanded = tenderedExpanded,
                         onExpandedChange = { tenderedExpanded = it },
-                        modifier = Modifier.width(110.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = tenderedCurrency,
-                            onValueChange = {},
-                            readOnly = true,
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(tenderedExpanded) },
-                            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryEditable),
-                            textStyle = LocalTextStyle.current.copy(fontSize = 18.sp)
-                        )
-                        ExposedDropdownMenu(expanded = tenderedExpanded, onDismissRequest = { tenderedExpanded = false }) {
-                            currencies.forEach { currency ->
-                                DropdownMenuItem(
-                                    text = { Text("${currency.code} (${currency.symbol})", fontSize = 16.sp) },
-                                    onClick = { tenderedCurrency = currency.code; tenderedExpanded = false }
-                                )
-                            }
-                        }
-                    }
+                        label = { "${it.code} (${it.symbol})" },
+                        onSelect = { tenderedCurrency = it },
+                    )
                 }
 
                 // Show equivalent in base currency
@@ -139,28 +126,14 @@ internal fun CashPaymentDialog(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Text("Change in:", fontSize = 16.sp)
-                                ExposedDropdownMenuBox(
+                                CurrencyPicker(
+                                    selected = changeCurrency,
+                                    currencies = currencies,
                                     expanded = changeExpanded,
                                     onExpandedChange = { changeExpanded = it },
-                                    modifier = Modifier.width(110.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = changeCurrency,
-                                        onValueChange = {},
-                                        readOnly = true,
-                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(changeExpanded) },
-                                        modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryEditable),
-                                        textStyle = LocalTextStyle.current.copy(fontSize = 18.sp)
-                                    )
-                                    ExposedDropdownMenu(expanded = changeExpanded, onDismissRequest = { changeExpanded = false }) {
-                                        currencies.forEach { currency ->
-                                            DropdownMenuItem(
-                                                text = { Text(currency.code, fontSize = 16.sp) },
-                                                onClick = { changeCurrency = currency.code; changeExpanded = false }
-                                            )
-                                        }
-                                    }
-                                }
+                                    label = { it.code },
+                                    onSelect = { changeCurrency = it },
+                                )
                                 if (changeCurrency != baseCurrency && changeDisplay != null) {
                                     Text("= ${changeDisplay!!.format()}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 18.sp)
                                 }
@@ -193,6 +166,55 @@ internal fun CashPaymentDialog(
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Complete", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Picks a currency, without ExposedDropdownMenuBox.
+ *
+ * That component's signature has changed across Material3 releases, and this
+ * library is compiled against one version while the applications that use it
+ * ship another — which crashed a live terminal mid-payment with
+ * NoSuchMethodError. A read-only field and a DropdownMenu do the same job using
+ * only API that has been stable, so the host's Material3 version stops mattering.
+ */
+@Composable
+private fun CurrencyPicker(
+    selected: String,
+    currencies: List<TenderCurrency>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    label: (TenderCurrency) -> String,
+    onSelect: (String) -> Unit,
+) {
+    Box(modifier = Modifier.width(110.dp)) {
+        OutlinedTextField(
+            value = selected,
+            onValueChange = {},
+            readOnly = true,
+            enabled = false,
+            textStyle = LocalTextStyle.current.copy(fontSize = 18.sp),
+            colors = OutlinedTextFieldDefaults.colors(
+                // A disabled field is the only way to make the whole control
+                // tappable rather than the caret landing in it; it must not look
+                // disabled, so the enabled colours are restated.
+                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onExpandedChange(!expanded) },
+        )
+
+        DropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
+            currencies.forEach { currency ->
+                DropdownMenuItem(
+                    text = { Text(label(currency), fontSize = 16.sp) },
+                    onClick = { onSelect(currency.code); onExpandedChange(false) },
+                )
             }
         }
     }

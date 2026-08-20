@@ -181,15 +181,23 @@ fun QrPaymentDialog(
         }
     }
 
+    // Once a QR code is on screen the customer may already have scanned it and
+    // the switch may already be holding the payment. A stray back press must not
+    // abandon that - only Cancel, which the operator presses deliberately.
+    val countingDown = flowState == QrFlowState.DISPLAYING_QR ||
+        flowState == QrFlowState.WAITING_CONFIRMATION
+
     Dialog(
         onDismissRequest = {
-            streamJob?.cancel()
-            onResult(QrPaymentResult.Cancelled)
-            onDismiss()
+            if (!countingDown) {
+                streamJob?.cancel()
+                onResult(QrPaymentResult.Cancelled)
+                onDismiss()
+            }
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
+            dismissOnBackPress = !countingDown,
             dismissOnClickOutside = false
         )
     ) {

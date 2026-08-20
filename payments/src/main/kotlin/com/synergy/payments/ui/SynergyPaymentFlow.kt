@@ -7,6 +7,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.synergy.payments.card.CardPaymentDriver
 import com.synergy.payments.model.TenderCurrency
 import com.synergy.payments.model.Money
@@ -241,6 +243,22 @@ private fun CardPaymentStep(
     onSwitchToCash: () -> Unit,
     onResult: (PaymentOutcome) -> Unit,
 ) {
+    // Every other step in this flow is a dialog. CardPaymentScreen was written to
+    // be hosted by CardPaymentActivity - a whole activity - so dropped in here it
+    // drew inline, underneath whatever screen the payment was started from.
+    // usePlatformDefaultWidth = false keeps it full-bleed the way it was designed.
+    //
+    // Back is off: once a card flow is counting down, the customer may already
+    // have presented a card, and a stray back press must not abandon it. The
+    // screen has its own Cancel.
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+        ),
+    ) {
     CardPaymentScreen(
         amount = amountCents,
         currency = currency,
@@ -266,4 +284,5 @@ private fun CardPaymentStep(
             }
         },
     )
+    }
 }

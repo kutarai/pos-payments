@@ -141,15 +141,22 @@ fun MobileMoneyPaymentDialog(
         onDispose { streamJob?.cancel() }
     }
 
+    // Once the prompt has gone to the customer's phone the switch is holding the
+    // payment, and a stray back press must not abandon it. Entering the number is
+    // still safe to back out of, because nothing has been sent yet.
+    val awaitingCustomer = flowState == MobileMoneyFlowState.WAITING_CONFIRMATION
+
     Dialog(
         onDismissRequest = {
-            streamJob?.cancel()
-            onResult(MobileMoneyPaymentResult.Cancelled)
-            onDismiss()
+            if (!awaitingCustomer) {
+                streamJob?.cancel()
+                onResult(MobileMoneyPaymentResult.Cancelled)
+                onDismiss()
+            }
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
+            dismissOnBackPress = !awaitingCustomer,
             dismissOnClickOutside = false
         )
     ) {
