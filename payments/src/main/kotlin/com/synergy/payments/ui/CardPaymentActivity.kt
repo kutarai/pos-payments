@@ -4,7 +4,6 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -12,12 +11,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.synergy.payments.R
 import com.synergy.payments.card.CardFlowUpdate
@@ -194,7 +191,7 @@ fun CardPaymentScreen(
             Text(
                 text = when (flowState) {
                     FlowState.SELECT_NETWORK -> "Select Card Type"
-                    FlowState.WAITING_FOR_CARD -> "Insert, Tap, or Swipe Card"
+                    FlowState.WAITING_FOR_CARD -> "Tap or Insert Card"
                     FlowState.READING_CARD -> "Reading Card..."
                     FlowState.ENTER_PIN_ON_KEYPAD -> "Enter PIN on Keypad"
                     FlowState.PROCESSING -> "Processing Payment..."
@@ -208,7 +205,16 @@ fun CardPaymentScreen(
                 },
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                // Twice the size while waiting for a card. That line is the instruction the
+                // customer is meant to act on, read at arm's length across a counter, and it
+                // is now the only text on the screen besides the amount.
+                fontSize = if (flowState == FlowState.WAITING_FOR_CARD) 32.sp
+                           else TextUnit.Unspecified,
+                fontWeight = if (flowState == FlowState.WAITING_FOR_CARD) FontWeight.Bold
+                             else FontWeight.Normal,
+                color = if (flowState == FlowState.WAITING_FOR_CARD)
+                            MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             // Main content area
@@ -229,7 +235,7 @@ fun CardPaymentScreen(
                                 selectedNetwork = CardNetwork.ZIMSWITCH
                                 flowState = FlowState.WAITING_FOR_CARD
                                 countdown = 30
-                                statusMessage = "Insert, Tap, or Swipe Card"
+                                statusMessage = "Tap or Insert Card"
 
                                 scope.launch {
                                     val thisAttempt = attempt
@@ -281,7 +287,7 @@ fun CardPaymentScreen(
                                 selectedNetwork = CardNetwork.VISA_MASTERCARD
                                 flowState = FlowState.WAITING_FOR_CARD
                                 countdown = 30
-                                statusMessage = "Insert, Tap, or Swipe Card"
+                                statusMessage = "Tap or Insert Card"
 
                                 scope.launch {
                                     val thisAttempt = attempt
@@ -329,68 +335,11 @@ fun CardPaymentScreen(
                     }
 
                     FlowState.WAITING_FOR_CARD -> {
-                        // Smaller than the other waits: this is the one state that also has to
-                        // fit the two card illustrations on a POS screen.
-                        PaymentCountdown(seconds = countdown, diameter = 64.dp, warnAt = 10)
-
-                        // Show card images: chip + tap
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(180.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.chip_card),
-                                    contentDescription = "Tap or insert card",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.FillBounds
-                                )
-                                Text(
-                                    "TAP or INSERT",
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 16.dp),
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                        }
-
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(180.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.magnetic_stripe_card),
-                                    contentDescription = "Swipe card",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.FillBounds
-                                )
-                                Text(
-                                    "SWIPE",
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 16.dp),
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                        }
+                        // Nothing else on this screen while it waits. The chip and magstripe
+                        // illustrations that used to sit here took two thirds of the height to
+                        // say what the line above already says, and pushed the countdown - the
+                        // one thing that is changing - down into a corner.
+                        PaymentCountdown(seconds = countdown, diameter = 220.dp, warnAt = 10)
                     }
 
                     FlowState.ENTER_PIN_ON_KEYPAD -> {

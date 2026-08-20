@@ -258,20 +258,8 @@ fun QrPaymentDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        Text(
-                            "$countdown",
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (countdown <= 10) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.primary
-                        )
-
-                        if (flowState == QrFlowState.WAITING_CONFIRMATION) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp
-                            )
-                        }
+                        // Smaller than the other waits: the QR itself is 256dp of this screen.
+                        PaymentCountdown(seconds = countdown, diameter = 72.dp, warnAt = 10)
 
                         OutlinedButton(
                             onClick = {
