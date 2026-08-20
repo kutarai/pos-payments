@@ -249,17 +249,7 @@ fun MobileMoneyPaymentDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(36.dp),
-                            strokeWidth = 3.dp
-                        )
-                        Text(
-                            "$countdown",
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (countdown <= 5) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.primary
-                        )
+                        PaymentCountdown(seconds = countdown, warnAt = 5)
                         OutlinedButton(
                             onClick = {
                                 streamJob?.cancel()

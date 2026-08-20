@@ -104,6 +104,12 @@ fun CardPaymentScreen(
     var switchCountdown by remember { mutableIntStateOf(20) }
     var paymentResult by remember { mutableStateOf<CardPaymentResult?>(null) }
 
+    // Which run of the card flow the screen is showing. Cancelling a driver does not make its
+    // processPayment call disappear - it returns, late, with Cancelled, and without this that
+    // stale answer would paint "Cancelled" over the timeout screen the cashier is reading. Each
+    // press of a card-type button owns a number; results arriving under an older one are dropped.
+    var attempt by remember { mutableIntStateOf(0) }
+
     val displayAmount = "$currency ${amount / 100}.${String.format("%02d", amount % 100)}"
 
     // Countdown timer while waiting for card
@@ -114,6 +120,12 @@ fun CardPaymentScreen(
             if (countdown == 0) {
                 flowState = FlowState.TIMEOUT
                 statusMessage = "No card detected — timed out"
+                attempt++
+                // The reader is still hunting for a card, and the screen has stopped waiting
+                // for one. Left running, a card presented late would authorise against a
+                // payment the cashier had already moved on from, and Retry would start a
+                // second flow alongside the first.
+                try { resolveDriver().cancel() } catch (_: Exception) {}
             }
         }
     }
@@ -220,10 +232,12 @@ fun CardPaymentScreen(
                                 statusMessage = "Insert, Tap, or Swipe Card"
 
                                 scope.launch {
+                                    val thisAttempt = attempt
                                     val terminal: CardPaymentDriver = resolveDriver()
                                     val result = terminal.processPayment(
                                         amount, CardNetwork.ZIMSWITCH, currency
                                     ) { update ->
+                                        if (attempt != thisAttempt) return@processPayment
                                         when (update) {
                                             CardFlowUpdate.CARD_DETECTED ->
                                                 flowState = FlowState.READING_CARD
@@ -235,6 +249,7 @@ fun CardPaymentScreen(
                                                 flowState = FlowState.ONLINE_AUTH
                                         }
                                     }
+                                    if (attempt != thisAttempt) return@launch
                                     handlePaymentResult(
                                         result,
                                         onFlowState = { flowState = it },
@@ -269,10 +284,12 @@ fun CardPaymentScreen(
                                 statusMessage = "Insert, Tap, or Swipe Card"
 
                                 scope.launch {
+                                    val thisAttempt = attempt
                                     val terminal: CardPaymentDriver = resolveDriver()
                                     val result = terminal.processPayment(
                                         amount, CardNetwork.VISA_MASTERCARD, currency
                                     ) { update ->
+                                        if (attempt != thisAttempt) return@processPayment
                                         when (update) {
                                             CardFlowUpdate.CARD_DETECTED ->
                                                 flowState = FlowState.READING_CARD
@@ -284,6 +301,7 @@ fun CardPaymentScreen(
                                                 flowState = FlowState.ONLINE_AUTH
                                         }
                                     }
+                                    if (attempt != thisAttempt) return@launch
                                     handlePaymentResult(
                                         result,
                                         onFlowState = { flowState = it },
@@ -311,13 +329,9 @@ fun CardPaymentScreen(
                     }
 
                     FlowState.WAITING_FOR_CARD -> {
-                        Text(
-                            "$countdown",
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (countdown <= 10) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.primary
-                        )
+                        // Smaller than the other waits: this is the one state that also has to
+                        // fit the two card illustrations on a POS screen.
+                        PaymentCountdown(seconds = countdown, diameter = 64.dp, warnAt = 10)
 
                         // Show card images: chip + tap
                         Card(
@@ -403,17 +417,7 @@ fun CardPaymentScreen(
 
                     FlowState.ONLINE_AUTH -> {
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "$switchCountdown",
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (switchCountdown <= 5) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.primary
-                        )
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(36.dp),
-                            strokeWidth = 3.dp
-                        )
+                        PaymentCountdown(seconds = switchCountdown, warnAt = 5)
                         Text(
                             "Contacting bank...",
                             style = MaterialTheme.typography.bodyLarge,
@@ -421,10 +425,21 @@ fun CardPaymentScreen(
                         )
                     }
 
-                    FlowState.SWITCH_OFFLINE, FlowState.SWITCH_TIMEOUT -> {
+                    // Three ways a card payment can stall, one thing for the cashier to do
+                    // about any of them: go round again, or take the money in cash. TIMEOUT -
+                    // nobody presented a card - used to fall through to the empty branch below,
+                    // leaving the word "Timed Out" and a Cancel button, so the only way on from
+                    // a customer who was slow finding their card was to abandon the sale and
+                    // start it again.
+                    FlowState.SWITCH_OFFLINE, FlowState.SWITCH_TIMEOUT,
+                    FlowState.TIMEOUT, FlowState.DECLINED -> {
                         Text(
-                            if (flowState == FlowState.SWITCH_OFFLINE)
-                                "Bank offline" else "Transaction timed out",
+                            when (flowState) {
+                                FlowState.SWITCH_OFFLINE -> "Bank offline"
+                                FlowState.TIMEOUT -> "No card presented"
+                                FlowState.DECLINED -> "Payment cancelled"
+                                else -> "Transaction timed out"
+                            },
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center
@@ -432,6 +447,9 @@ fun CardPaymentScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
+                                // Back to the card type, not straight to waiting: after a
+                                // timeout the cashier may want the other network, and the
+                                // driver call that was in flight has been cancelled.
                                 flowState = FlowState.SELECT_NETWORK
                                 countdown = 30
                             },
