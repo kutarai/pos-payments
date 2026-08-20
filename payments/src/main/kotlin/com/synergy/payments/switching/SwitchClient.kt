@@ -129,17 +129,23 @@ class SwitchClient(private val endpointProvider: () -> Endpoint?) {
             .heartbeat(request)
     }
 
-    @Synchronized
     fun shutdown() {
-        val open = currentChannel ?: return
+        // Take the channel and clear the state under the lock, then wait outside it. Draining a
+        // channel takes seconds, and holding the monitor across that wait would park the EMV
+        // kernel's binder thread in channel() for the duration — a dialog dismissed mid
+        // authorisation is exactly when both happen at once.
+        val open = synchronized(this) {
+            val channel = currentChannel
+            currentChannel = null
+            currentEndpoint = null
+            channel
+        } ?: return
+
         try {
             open.shutdown().awaitTermination(5, TimeUnit.SECONDS)
         } catch (e: Exception) {
             Log.w(TAG, "Error shutting down gRPC channel", e)
             open.shutdownNow()
-        } finally {
-            currentChannel = null
-            currentEndpoint = null
         }
     }
 }
