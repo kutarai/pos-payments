@@ -78,7 +78,7 @@ fun MobileMoneyPaymentDialog(
         streamJob = coroutineScope.launch {
             try {
                 val request = MobileMoneyPaymentRequest.newBuilder()
-                    .setTerminalId(terminalId)
+                    .setDeviceId(terminalId)
                     .setMerchantId(merchantId)
                     .setPaymentReference(ref)
                     .setCurrency(amount.currency)

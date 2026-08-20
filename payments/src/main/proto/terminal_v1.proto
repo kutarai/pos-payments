@@ -23,7 +23,7 @@ message TerminalIdentifier {
 }
 
 message TerminalRegistrationRequest {
-  string terminal_id = 1;
+  string device_id = 1;
   string merchant_id = 2;
   string serial_number = 3;
   string firmware_version = 4;
@@ -46,7 +46,7 @@ message TerminalConfiguration {
 }
 
 message HeartbeatRequest {
-  string terminal_id = 1;
+  string device_id = 1;
   string timestamp = 2;              // ISO 8601
   int32 battery_level = 3;           // 0-100
   int64 transaction_count = 4;       // Total since last restart

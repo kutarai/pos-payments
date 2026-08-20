@@ -25,7 +25,8 @@ service PaymentService {
 // ─── QR Payment ──────────────────────────────────────────────────────
 
 message QrPaymentRequest {
-  string terminal_id = 1;
+  // Ours, and permanent. The switch resolves the bank's terminal number from it.
+  string device_id = 1;
   string merchant_id = 2;
   string payment_reference = 3;  // Unique reference from EMVco QR code
   string currency = 4;           // ISO 4217 alpha-3
@@ -33,6 +34,10 @@ message QrPaymentRequest {
   string qr_payload = 6;         // Full EMVco TLV QR string
   double latitude = 7;           // GPS latitude of device
   double longitude = 8;          // GPS longitude of device
+  // The bank's number as the device believes it to be, and the hardware serial. Both are
+  // recorded for cross-check; the switch's own record is what it acts on.
+  string terminal_id = 9;
+  string serial_number = 10;
 }
 
 message QrPaymentUpdate {
@@ -54,7 +59,8 @@ enum QrPaymentStatus {
 // ─── Mobile Money Payment ──────────────────────────────────────────
 
 message MobileMoneyPaymentRequest {
-  string terminal_id = 1;
+  // Ours, and permanent. The switch resolves the bank's terminal number from it.
+  string device_id = 1;
   string merchant_id = 2;
   string payment_reference = 3;   // Unique reference for this payment request
   string currency = 4;            // ISO 4217 alpha-3
@@ -62,6 +68,10 @@ message MobileMoneyPaymentRequest {
   string mobile_number = 6;       // Customer's mobile wallet number
   double latitude = 7;            // GPS latitude of device
   double longitude = 8;           // GPS longitude of device
+  // The bank's number as the device believes it to be, and the hardware serial. Both are
+  // recorded for cross-check; the switch's own record is what it acts on.
+  string terminal_id = 9;
+  string serial_number = 10;
 }
 
 message MobileMoneyPaymentUpdate {
@@ -116,6 +126,10 @@ message PointOfInteraction {
   string id = 1;                  // Terminal ID
   repeated CardReadingCapability card_reading_capabilities = 2;
   repeated CvmCapability cvm_capabilities = 3;
+  // Identity carried explicitly, rather than left to whatever `id` meant this year.
+  string device_id = 4;
+  string terminal_id = 5;
+  string serial_number = 6;
 }
 
 enum CardReadingCapability {

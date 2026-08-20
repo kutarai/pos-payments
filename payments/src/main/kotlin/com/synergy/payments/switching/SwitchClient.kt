@@ -101,7 +101,7 @@ class SwitchClient(val host: String, val port: Int) {
     }
 
     fun register(request: TerminalRegistrationRequest): TerminalRegistrationResponse {
-        Log.d(TAG, "Registering terminal: ${request.terminalId}")
+        Log.d(TAG, "Registering terminal: ${request.deviceId}")
         return terminalStub
             .withDeadlineAfter(MANAGEMENT_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .register(request)

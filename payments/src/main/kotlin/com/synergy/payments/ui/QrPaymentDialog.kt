@@ -103,7 +103,7 @@ fun QrPaymentDialog(
         streamJob = coroutineScope.launch {
             try {
                 val request = QrPaymentRequest.newBuilder()
-                    .setTerminalId(terminalId)
+                    .setDeviceId(terminalId)
                     .setMerchantId(merchantId)
                     .setPaymentReference(currentRef)
                     .setCurrency(amount.currency)
