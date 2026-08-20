@@ -81,11 +81,20 @@ private enum class FlowState {
 fun CardPaymentScreen(
     amount: Long,
     currency: String = "ZWG",
+    driver: CardPaymentDriver? = null,
     onBack: () -> Unit,
     onPaymentComplete: (CardPaymentResult) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // Where this screen gets the terminal from. A caller that already holds a driver hands it
+    // over; that is the payment flow, which builds one per payment out of the merchant and
+    // serial the sale is being taken under. An Activity started by an Intent holds nothing and
+    // can be handed nothing, so it falls back to whatever the application registered at
+    // start-up. Resolved at the moment a card is asked for, not when the screen opens, so an
+    // application with neither fails at the button rather than on arrival.
+    val resolveDriver = { driver ?: CardPaymentDrivers.create(context.applicationContext) }
 
     var flowState by remember { mutableStateOf(FlowState.SELECT_NETWORK) }
     var selectedNetwork by remember { mutableStateOf<CardNetwork?>(null) }
@@ -125,7 +134,7 @@ fun CardPaymentScreen(
         scope.launch {
             // Whatever the terminal needs doing to stop looking for a card, it knows; this
             // screen only knows that the customer has gone.
-            try { CardPaymentDrivers.create(context.applicationContext).cancel() } catch (_: Exception) {}
+            try { resolveDriver().cancel() } catch (_: Exception) {}
             kotlinx.coroutines.delay(300)
             onPaymentComplete(CardPaymentResult.Cancelled)
             onBack()
@@ -211,9 +220,8 @@ fun CardPaymentScreen(
                                 statusMessage = "Insert, Tap, or Swipe Card"
 
                                 scope.launch {
-                                    val driver: CardPaymentDriver =
-                                        CardPaymentDrivers.create(context.applicationContext)
-                                    val result = driver.processPayment(
+                                    val terminal: CardPaymentDriver = resolveDriver()
+                                    val result = terminal.processPayment(
                                         amount, CardNetwork.ZIMSWITCH, currency
                                     ) { update ->
                                         when (update) {
@@ -261,9 +269,8 @@ fun CardPaymentScreen(
                                 statusMessage = "Insert, Tap, or Swipe Card"
 
                                 scope.launch {
-                                    val driver: CardPaymentDriver =
-                                        CardPaymentDrivers.create(context.applicationContext)
-                                    val result = driver.processPayment(
+                                    val terminal: CardPaymentDriver = resolveDriver()
+                                    val result = terminal.processPayment(
                                         amount, CardNetwork.VISA_MASTERCARD, currency
                                     ) { update ->
                                         when (update) {

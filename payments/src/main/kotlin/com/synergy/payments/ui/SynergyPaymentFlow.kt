@@ -262,6 +262,7 @@ private fun CardPaymentStep(
     CardPaymentScreen(
         amount = amountCents,
         currency = currency,
+        driver = driver,
         onBack = { onResult(PaymentOutcome.Cancelled) },
         onPaymentComplete = { result ->
             when (result) {
