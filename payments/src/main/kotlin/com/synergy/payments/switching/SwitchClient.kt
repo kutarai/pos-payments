@@ -148,4 +148,17 @@ class SwitchClient(private val endpointProvider: () -> Endpoint?) {
             open.shutdownNow()
         }
     }
+
+    /**
+     * Close without waiting. For callers on a thread that must not block — Compose runs
+     * onDispose on the main thread, and a channel whose transport is already dead takes the
+     * full grace period to close politely, which is an ANR rather than a tidy shutdown.
+     */
+    @Synchronized
+    fun shutdownNow() {
+        val open = currentChannel ?: return
+        currentChannel = null
+        currentEndpoint = null
+        open.shutdownNow()
+    }
 }

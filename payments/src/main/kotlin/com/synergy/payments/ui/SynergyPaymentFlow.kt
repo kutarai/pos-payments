@@ -1,5 +1,6 @@
 package com.synergy.payments.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -56,12 +57,28 @@ fun SynergyPaymentFlow(
     var screen by remember { mutableStateOf(PaymentStep.MethodSelection) }
 
     DisposableEffect(switchClient) {
-        onDispose { switchClient.shutdown() }
+        // shutdownNow, not shutdown: onDispose runs on the main thread, and shutdown()'s
+        // graceful wait can block it for up to 5 seconds — the ANR threshold — when the
+        // channel's transport is already dead (a QR payment that timed out because the
+        // network dropped, for instance).
+        onDispose { switchClient.shutdownNow() }
     }
 
     fun finish(result: PaymentOutcome) {
         onResult(result)
         onDismiss()
+    }
+
+    // The card step used to be its own Activity, where the platform's back press ended the
+    // payment. In-composition it would otherwise finish the whole application mid-transaction.
+    BackHandler(enabled = true) {
+        when (screen) {
+            PaymentStep.MethodSelection -> finish(PaymentOutcome.Cancelled)
+            // Back from a payment step returns to the method list rather than abandoning the
+            // sale: a customer who changes their mind about how to pay has not changed their
+            // mind about paying.
+            else -> screen = PaymentStep.MethodSelection
+        }
     }
 
     when (screen) {
@@ -103,6 +120,9 @@ fun SynergyPaymentFlow(
                             qrCodeData = result.qrCodeData,
                         )
                     )
+                    // A cashier who has just told the customer "the QR didn't go through, do you
+                    // have cash" should not have to start the payment again.
+                    is QrPaymentResult.SwitchToCash -> { screen = PaymentStep.Cash }
                     else -> finish(PaymentOutcome.Cancelled)
                 }
             },
@@ -122,6 +142,9 @@ fun SynergyPaymentFlow(
                             mobileNumber = result.mobileNumber,
                         )
                     )
+                    // A cashier who has just told the customer "the mobile money payment didn't
+                    // go through, do you have cash" should not have to start the payment again.
+                    is MobileMoneyPaymentResult.SwitchToCash -> { screen = PaymentStep.Cash }
                     else -> finish(PaymentOutcome.Cancelled)
                 }
             },

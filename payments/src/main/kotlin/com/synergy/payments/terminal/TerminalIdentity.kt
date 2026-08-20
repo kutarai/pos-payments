@@ -33,11 +33,29 @@ class TerminalIdentity(
 
     private val _current = MutableStateFlow(read())
 
-    /** The identity as it stands, updated when the Device Owner pushes a new policy. */
+    /**
+     * The identity as it stands, updated when the Device Owner pushes a new policy.
+     *
+     * The serial in this StateFlow is only as fresh as the last policy push or the vendor SDK
+     * binding — it is not re-read per collection. A composable re-reading the hardware on every
+     * recomposition would be worse than the staleness this trades for; callers who need the
+     * freshly-read serial should use [snapshot] instead.
+     */
     val current: StateFlow<TerminalSnapshot> = _current.asStateFlow()
 
-    /** The identity as it stands, for callers outside a composition. */
-    val snapshot: TerminalSnapshot get() = _current.value
+    /**
+     * The identity as it stands, for callers outside a composition.
+     *
+     * The serial is re-read here rather than trusted from the last policy push: the hardware
+     * manager deliberately retries rather than caching a failed read, so a snapshot taken before
+     * the vendor SDK had bound would otherwise pin "UNKNOWN_SN" for the life of the process — and
+     * the serial's whole purpose is to be cross-checked against the one the device enrolled with.
+     */
+    val snapshot: TerminalSnapshot
+        get() = _current.value.let { current ->
+            val serial = serialProvider()
+            if (serial == current.serialNumber) current else current.copy(serialNumber = serial)
+        }
 
     private val restrictionsChanged = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
