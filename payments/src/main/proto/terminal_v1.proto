@@ -19,7 +19,7 @@ service TerminalManagementService {
 }
 
 message TerminalIdentifier {
-  string terminal_id = 1;
+  string device_id = 1;
 }
 
 message TerminalRegistrationRequest {
