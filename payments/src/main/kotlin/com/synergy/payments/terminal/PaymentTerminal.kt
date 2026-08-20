@@ -13,7 +13,7 @@ package com.synergy.payments.terminal
  */
 
 /** Who this terminal is, as the acquirer and the branch know it. */
-interface TerminalIdentity {
+interface TerminalHardwareIdentity {
     /**
      * The serial printed on the unit.
      *
@@ -52,7 +52,7 @@ interface OnboardPrinter {
  * needs one asks and copes with null rather than assuming the hardware it was written on.
  */
 interface Terminal {
-    val identity: TerminalIdentity
+    val identity: TerminalHardwareIdentity
     val pinPad: SecurePinPad?
     val barcodeReader: BarcodeScanner?
     val onboardPrinter: OnboardPrinter?
