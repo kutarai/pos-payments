@@ -99,7 +99,7 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
 
     // ── Build protobuf request from EMV data ──────────────────────────
 
-    private fun buildAuthorisationRequest(
+    internal fun buildAuthorisationRequest(
         config: TerminalConfig,
         emvTlvData: Map<String, String>,
         pan: String,
@@ -160,7 +160,9 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
                 protocolVersion = "14.0"
                 this.exchangeId = exchangeId
                 creationDateTime = now
-                initiatingPartyId = config.terminalId
+                // The switch reads its device identity from here. It read a terminal id for as
+                // long as this said config.terminalId, and its device lookup never matched.
+                initiatingPartyId = config.deviceId
             }.build()
 
             environment = Environment.newBuilder().apply {
@@ -172,6 +174,9 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
 
                 poi = PointOfInteraction.newBuilder().apply {
                     id = config.terminalId
+                    this.deviceId = config.deviceId
+                    this.terminalId = config.terminalId
+                    this.serialNumber = config.serialNumber
                     addCardReadingCapabilities(CardReadingCapability.ICC)
                     addCardReadingCapabilities(CardReadingCapability.ECTL)
                     addCardReadingCapabilities(CardReadingCapability.MGST)

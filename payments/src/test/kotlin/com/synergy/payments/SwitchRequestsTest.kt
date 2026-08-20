@@ -75,4 +75,35 @@ class SwitchRequestsTest {
         assertEquals("DEV-0001", qr.deviceId)
         assertEquals("DEV-0001", mobile.deviceId)
     }
+
+    @Test
+    fun `a card authorisation puts the device id where the switch reads one`() {
+        val config = com.synergy.payments.card.TerminalConfig(
+            terminalId = "TERM-42",
+            merchantId = "MERCH-7",
+            merchantName = "Synergy Pharmacy",
+            deviceId = "DEV-0001",
+            serialNumber = "SN-123",
+        )
+
+        val request = com.synergy.payments.switching.SwitchIntegration(
+            com.synergy.payments.switching.SwitchClient { null }
+        ).buildAuthorisationRequest(
+            config = config,
+            emvTlvData = emptyMap(),
+            pan = "4111111111111111",
+            encryptedPinBlock = null,
+            dukptKsn = null,
+            cardEntryMode = "ICC",
+            amount = 1000L,
+        )
+
+        // The switch reads the device id from here — it has since the two identifiers were
+        // separated. Sending the terminal id was why its device lookup never matched.
+        assertEquals("DEV-0001", request.header.initiatingPartyId)
+        assertEquals("DEV-0001", request.environment.poi.deviceId)
+        assertEquals("TERM-42", request.environment.poi.terminalId)
+        assertEquals("SN-123", request.environment.poi.serialNumber)
+        assertEquals("MERCH-7", request.environment.merchant.id)
+    }
 }

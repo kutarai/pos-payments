@@ -150,6 +150,10 @@ data class TerminalConfig(
     val terminalId: String,
     val merchantId: String,
     val merchantName: String,
+    /** Ours, permanent, from managed configuration. The switch resolves the bank's number from it. */
+    val deviceId: String = "",
+    /** The hardware's serial, read from the terminal rather than configured. */
+    val serialNumber: String = "",
     val merchantCategoryCode: String = DEFAULT_MERCHANT_CATEGORY_CODE,
     val countryCode: String = "840", // USA
     val currencyCode: String = "840", // USD
