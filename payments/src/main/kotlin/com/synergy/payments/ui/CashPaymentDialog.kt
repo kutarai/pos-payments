@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.synergy.payments.model.Currency
+import com.synergy.payments.model.TenderCurrency
 import com.synergy.payments.model.Money
 
 internal sealed class CashResult {
@@ -25,7 +25,7 @@ internal sealed class CashResult {
 @Composable
 internal fun CashPaymentDialog(
     total: Money,
-    currencies: List<Currency>,
+    currencies: List<TenderCurrency>,
     convertCurrency: suspend (Money, String) -> Money?,
     onResult: (CashResult) -> Unit,
     onDismiss: () -> Unit

@@ -7,7 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.synergy.payments.card.CardPaymentDriver
-import com.synergy.payments.model.Currency
+import com.synergy.payments.model.TenderCurrency
 import com.synergy.payments.model.Money
 import com.synergy.payments.switching.SwitchClient
 
@@ -37,7 +37,7 @@ fun SynergyPaymentFlow(
     amount: Money,
     config: PaymentConfig,
     cardDriver: CardPaymentDriver,
-    currencies: List<Currency> = emptyList(),
+    currencies: List<TenderCurrency> = emptyList(),
     convertCurrency: suspend (Money, String) -> Money? = { _, _ -> null },
     cardPaymentEnabled: Boolean = true,
     onResult: (PaymentOutcome) -> Unit,
