@@ -21,11 +21,15 @@ class TerminalSnapshotTest {
         deviceId: String? = "DEV-0001",
         terminalId: String? = "TERM-42",
         merchantId: String? = "MERCH-7",
+        merchantName: String? = "Redcliff Municipality",
+        tin: String? = "1234567890",
         endpoint: String? = "switch.unipay.co.zw:3333",
     ) = mapOf(
         TerminalSnapshot.KEY_DEVICE_ID to deviceId,
         TerminalSnapshot.KEY_TERMINAL_ID to terminalId,
         TerminalSnapshot.KEY_MERCHANT_ID to merchantId,
+        TerminalSnapshot.KEY_MERCHANT_NAME to merchantName,
+        TerminalSnapshot.KEY_TIN to tin,
         TerminalSnapshot.KEY_SWITCH_ENDPOINT to endpoint,
     )
 
@@ -36,6 +40,8 @@ class TerminalSnapshotTest {
         assertEquals("DEV-0001", snapshot.deviceId)
         assertEquals("TERM-42", snapshot.terminalId)
         assertEquals("MERCH-7", snapshot.merchantId)
+        assertEquals("Redcliff Municipality", snapshot.merchantName)
+        assertEquals("1234567890", snapshot.taxIdentificationNumber)
         assertEquals(Endpoint("switch.unipay.co.zw", 3333), snapshot.endpoint)
         assertEquals("SN-123", snapshot.serialNumber)
         assertTrue(snapshot.isProvisioned)
@@ -107,5 +113,21 @@ class TerminalSnapshotTest {
         assertNull(Endpoint.parse("switch.unipay.co.zw:zero"))// not a number
         assertNull(Endpoint.parse("switch.unipay.co.zw:0"))   // out of range
         assertNull(Endpoint.parse("switch.unipay.co.zw:70000"))
+    }
+
+
+    @Test
+    fun `paperwork missing does not stop a payment`() {
+        // The name goes on a receipt and the TIN goes to the revenue authority. Neither decides
+        // where money lands, so a policy that omits them yields a worse receipt, not a closed
+        // counter - refusing to trade over a missing line would turn a typo into lost takings.
+        val snapshot = TerminalSnapshot.parse(
+            values(merchantName = null, tin = null),
+            serialNumber = "SN-123",
+        )
+
+        assertNull(snapshot.merchantName)
+        assertNull(snapshot.taxIdentificationNumber)
+        assertTrue(snapshot.isProvisioned)
     }
 }

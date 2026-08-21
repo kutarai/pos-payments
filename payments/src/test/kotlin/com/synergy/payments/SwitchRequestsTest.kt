@@ -19,6 +19,8 @@ class SwitchRequestsTest {
         deviceId = "DEV-0001",
         terminalId = "TERM-42",
         merchantId = "MERCH-7",
+        merchantName = "Redcliff Municipality",
+        taxIdentificationNumber = "1234567890",
         endpoint = Endpoint("switch.unipay.co.zw", 3333),
         serialNumber = "SN-123",
     )

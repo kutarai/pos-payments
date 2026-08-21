@@ -38,6 +38,19 @@ data class TerminalSnapshot(
     val deviceId: String?,
     val terminalId: String?,
     val merchantId: String?,
+    /**
+     * The merchant's trading name, as it should appear on a receipt.
+     *
+     * Nothing settles to it — [merchantId] decides that — so a terminal without one can still
+     * take money. It is here because it belongs to the deployment rather than to the build: a
+     * name compiled into an application is the wrong council's name on somebody's receipt.
+     */
+    val merchantName: String?,
+    /**
+     * The merchant's tax identification number, for the revenue authority's copy of the
+     * receipt. The seller's, not the customer's.
+     */
+    val taxIdentificationNumber: String?,
     val endpoint: Endpoint?,
     val serialNumber: String,
 ) {
@@ -50,19 +63,33 @@ data class TerminalSnapshot(
      */
     val isProvisioned: Boolean
         get() = deviceId != null && merchantId != null && endpoint != null
+    // Deliberately not merchantName or the TIN: both belong on the paperwork, and a receipt
+    // missing a line is a worse receipt, not a wrong payment. Refusing to take money over
+    // either would turn a typo in a policy into a closed counter.
 
     companion object {
         const val KEY_DEVICE_ID = "device_id"
         const val KEY_TERMINAL_ID = "terminal_id"
         const val KEY_MERCHANT_ID = "merchant_id"
+        const val KEY_MERCHANT_NAME = "merchant_name"
+        const val KEY_TIN = "tin"
         const val KEY_SWITCH_ENDPOINT = "switch_endpoint"
 
-        val KEYS = listOf(KEY_DEVICE_ID, KEY_TERMINAL_ID, KEY_MERCHANT_ID, KEY_SWITCH_ENDPOINT)
+        val KEYS = listOf(
+            KEY_DEVICE_ID,
+            KEY_TERMINAL_ID,
+            KEY_MERCHANT_ID,
+            KEY_MERCHANT_NAME,
+            KEY_TIN,
+            KEY_SWITCH_ENDPOINT,
+        )
 
         fun parse(values: Map<String, String?>, serialNumber: String) = TerminalSnapshot(
             deviceId = values[KEY_DEVICE_ID].orNull(),
             terminalId = values[KEY_TERMINAL_ID].orNull(),
             merchantId = values[KEY_MERCHANT_ID].orNull(),
+            merchantName = values[KEY_MERCHANT_NAME].orNull(),
+            taxIdentificationNumber = values[KEY_TIN].orNull(),
             endpoint = Endpoint.parse(values[KEY_SWITCH_ENDPOINT]),
             serialNumber = serialNumber,
         )
