@@ -56,6 +56,18 @@ class CardPaymentActivity : ComponentActivity() {
     }
 }
 
+/**
+ * The states that mean the payment did not happen — every one of them drawn in the theme's
+ * error colour, wherever the screen says something about them.
+ */
+private val FAILED_STATES = setOf(
+    FlowState.DECLINED,
+    FlowState.ERROR,
+    FlowState.TIMEOUT,
+    FlowState.SWITCH_TIMEOUT,
+    FlowState.SWITCH_OFFLINE,
+)
+
 /** Payment flow states driven by hardware events. */
 private enum class FlowState {
     SELECT_NETWORK,
@@ -218,9 +230,14 @@ fun CardPaymentScreen(
                            else TextUnit.Unspecified,
                 fontWeight = if (flowState == FlowState.WAITING_FOR_CARD) FontWeight.Bold
                              else FontWeight.Normal,
-                color = if (flowState == FlowState.WAITING_FOR_CARD)
-                            MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurfaceVariant
+                color = when {
+                    // A failure is said in the colour that means failure, here as well as in
+                    // the headline below - otherwise the line a cashier reads first is the one
+                    // still in the same black it used while the payment was going fine.
+                    flowState in FAILED_STATES -> MaterialTheme.colorScheme.error
+                    flowState == FlowState.WAITING_FOR_CARD -> MaterialTheme.colorScheme.onSurface
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
 
             // Main content area
@@ -388,16 +405,13 @@ fun CardPaymentScreen(
                     // start it again.
                     FlowState.SWITCH_OFFLINE, FlowState.SWITCH_TIMEOUT,
                     FlowState.TIMEOUT, FlowState.DECLINED -> {
-                        Text(
+                        PaymentErrorMessage(
                             when (flowState) {
-                                FlowState.SWITCH_OFFLINE -> "Bank offline"
+                                FlowState.SWITCH_OFFLINE -> "Bank offline — could not connect"
                                 FlowState.TIMEOUT -> "No card presented"
                                 FlowState.DECLINED -> "Payment cancelled"
-                                else -> "Transaction timed out"
-                            },
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
+                                else -> "Bank did not respond in time"
+                            }
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
@@ -471,8 +485,12 @@ fun CardPaymentScreen(
     errorMessage?.let { message ->
         AlertDialog(
             onDismissRequest = { errorMessage = null },
-            title = { Text("Payment Error") },
-            text = { Text(message) },
+            title = {
+                Text("Payment Error", color = MaterialTheme.colorScheme.error)
+            },
+            // The reason the terminal gave — a declined code, a wrong PIN, whatever the kernel
+            // said. Red, because it is the only place the operator learns why.
+            text = { Text(message, color = MaterialTheme.colorScheme.error) },
             confirmButton = {
                 TextButton(onClick = {
                     errorMessage = null

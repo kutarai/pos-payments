@@ -66,6 +66,11 @@ fun QrPaymentDialog(
 ) {
     var flowState by remember { mutableStateOf(QrFlowState.DISPLAYING_QR) }
     var countdown by remember { mutableIntStateOf(30) }
+    // Why it ended. A declined payment, a customer who never scanned, and a switch that could
+    // not be reached were all announced as "Payment not received" - true of all three and
+    // useful for none, and the one an operator most needs to tell apart is the one where the
+    // problem is the bank rather than the customer.
+    var failureMessage by remember { mutableStateOf("Payment not received") }
     val coroutineScope = rememberCoroutineScope()
     var streamJob by remember { mutableStateOf<Job?>(null) }
 
@@ -136,9 +141,11 @@ fun QrPaymentDialog(
                             )
                         }
                         QrPaymentStatus.QR_DECLINED -> {
+                            failureMessage = "Payment declined"
                             flowState = QrFlowState.TIMEOUT
                         }
                         QrPaymentStatus.QR_TIMED_OUT -> {
+                            failureMessage = "Payment not received"
                             flowState = QrFlowState.TIMEOUT
                         }
                         else -> {}
@@ -148,8 +155,12 @@ fun QrPaymentDialog(
                 Log.d(TAG, "Stream cancelled: ref=$currentRef")
             } catch (e: Exception) {
                 // gRPC error — log but do NOT change flowState.
-                // The countdown timer will handle the timeout transition.
+                // The countdown timer will handle the timeout transition: the customer may
+                // still be paying, and the stream dropping is not proof that they did not.
+                // The reason is kept, though, so that if the countdown does run out the screen
+                // can say the bank could not be reached rather than blaming the customer.
                 Log.e(TAG, "Stream error (countdown still running): ref=$currentRef", e)
+                failureMessage = "Bank unreachable — could not confirm the payment"
             }
         }
     }
@@ -293,12 +304,7 @@ fun QrPaymentDialog(
                     }
 
                     QrFlowState.TIMEOUT -> {
-                        Text(
-                            "Payment not received",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        )
+                        PaymentErrorMessage(failureMessage)
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Button(
@@ -306,6 +312,7 @@ fun QrPaymentDialog(
                                 // Generate fresh QR with new payment reference
                                 generateQr()
                                 countdown = 30
+                                failureMessage = "Payment not received"
                                 flowState = QrFlowState.DISPLAYING_QR
                                 // Stream auto-starts via LaunchedEffect(paymentReference)
                             },

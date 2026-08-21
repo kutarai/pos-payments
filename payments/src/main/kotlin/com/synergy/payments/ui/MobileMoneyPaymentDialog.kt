@@ -109,7 +109,7 @@ fun MobileMoneyPaymentDialog(
                             flowState = MobileMoneyFlowState.FAILED
                         }
                         MobileMoneyPaymentStatus.MOBILE_TIMED_OUT -> {
-                            failureMessage = "No response received"
+                            failureMessage = "Bank unreachable — no response received"
                             flowState = MobileMoneyFlowState.FAILED
                         }
                         else -> {}
@@ -272,13 +272,7 @@ fun MobileMoneyPaymentDialog(
                     }
 
                     MobileMoneyFlowState.FAILED -> {
-                        Text(
-                            failureMessage,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                        PaymentErrorMessage(failureMessage)
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Button(
