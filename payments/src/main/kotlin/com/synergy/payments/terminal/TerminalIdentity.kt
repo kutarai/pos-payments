@@ -80,7 +80,28 @@ class TerminalIdentity(
     private fun read(): TerminalSnapshot {
         val restrictions = restrictionsManager.applicationRestrictions
         val values = TerminalSnapshot.KEYS.associateWith { restrictions?.getString(it) }
-        return TerminalSnapshot.parse(values, serialProvider())
+        val snapshot = TerminalSnapshot.parse(values, serialProvider())
+
+        // Say out loud what the policy contained.
+        //
+        // An unprovisioned terminal offers cash and nothing else, which on the counter looks
+        // exactly like a payment library that has lost its card support - and the policy is the
+        // one input nobody can inspect from outside the app: adb cannot read another package's
+        // restrictions without root, and a DPC that is simply not pushing to this package
+        // writes nothing anywhere. Without this line the difference between "no policy" and
+        // "policy with a typo in one key" costs a site visit to tell apart.
+        //
+        // None of it is a secret. It is a merchant number, a hostname and a tax number - the
+        // same things that are printed on the receipt handed to the customer.
+        Log.i(
+            TAG,
+            "Managed configuration read: " +
+                TerminalSnapshot.KEYS.joinToString(", ") { key ->
+                    "$key=" + (values[key]?.takeIf { it.isNotBlank() } ?: "<absent>")
+                } +
+                ", provisioned=${snapshot.isProvisioned}",
+        )
+        return snapshot
     }
 
     companion object {
