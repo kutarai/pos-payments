@@ -72,7 +72,7 @@ data class TerminalSnapshot(
         const val KEY_TERMINAL_ID = "terminal_id"
         const val KEY_MERCHANT_ID = "merchant_id"
         const val KEY_MERCHANT_NAME = "merchant_name"
-        const val KEY_TIN = "tin"
+        const val KEY_MERCHANT_TIN = "merchant_tin"
         const val KEY_SWITCH_ENDPOINT = "switch_endpoint"
 
         val KEYS = listOf(
@@ -80,7 +80,7 @@ data class TerminalSnapshot(
             KEY_TERMINAL_ID,
             KEY_MERCHANT_ID,
             KEY_MERCHANT_NAME,
-            KEY_TIN,
+            KEY_MERCHANT_TIN,
             KEY_SWITCH_ENDPOINT,
         )
 
@@ -89,7 +89,7 @@ data class TerminalSnapshot(
             terminalId = values[KEY_TERMINAL_ID].orNull(),
             merchantId = values[KEY_MERCHANT_ID].orNull(),
             merchantName = values[KEY_MERCHANT_NAME].orNull(),
-            taxIdentificationNumber = values[KEY_TIN].orNull(),
+            taxIdentificationNumber = values[KEY_MERCHANT_TIN].orNull(),
             endpoint = Endpoint.parse(values[KEY_SWITCH_ENDPOINT]),
             serialNumber = serialNumber,
         )

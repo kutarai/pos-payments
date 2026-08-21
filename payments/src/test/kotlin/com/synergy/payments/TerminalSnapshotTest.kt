@@ -29,7 +29,7 @@ class TerminalSnapshotTest {
         TerminalSnapshot.KEY_TERMINAL_ID to terminalId,
         TerminalSnapshot.KEY_MERCHANT_ID to merchantId,
         TerminalSnapshot.KEY_MERCHANT_NAME to merchantName,
-        TerminalSnapshot.KEY_TIN to tin,
+        TerminalSnapshot.KEY_MERCHANT_TIN to tin,
         TerminalSnapshot.KEY_SWITCH_ENDPOINT to endpoint,
     )
 
