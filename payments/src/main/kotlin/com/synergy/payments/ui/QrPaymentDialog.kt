@@ -3,6 +3,8 @@ package com.synergy.payments.ui
 import android.graphics.Bitmap
 import android.util.Log
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -204,15 +206,21 @@ fun QrPaymentDialog(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(12.dp),
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    // A QR, a caption, a clock and a button, on a terminal screen: it came to
+                    // more than the height available and the Cancel button was cut off at the
+                    // bottom, which on a payment screen is the one control that must be
+                    // reachable. The sizes below fit it; the scroll is there so no future
+                    // addition can quietly take it away again.
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
                     text = "Zim QR Payment",
@@ -229,7 +237,7 @@ fun QrPaymentDialog(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp),
+                            .padding(8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text("Amount", style = MaterialTheme.typography.bodyMedium)
@@ -247,7 +255,7 @@ fun QrPaymentDialog(
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
                                 contentDescription = "Zim QR Code",
-                                modifier = Modifier.size(256.dp)
+                                modifier = Modifier.size(200.dp)
                             )
                         }
 
@@ -258,8 +266,8 @@ fun QrPaymentDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        // Smaller than the other waits: the QR itself is 256dp of this screen.
-                        PaymentCountdown(seconds = countdown, diameter = 72.dp, warnAt = 10)
+                        // Smaller than the other waits: the QR itself takes 200dp of this screen.
+                        PaymentCountdown(seconds = countdown, diameter = 56.dp, warnAt = 10)
 
                         OutlinedButton(
                             onClick = {
