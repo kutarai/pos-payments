@@ -97,7 +97,13 @@ fun CardPaymentScreen(
     var selectedNetwork by remember { mutableStateOf<CardNetwork?>(null) }
     var statusMessage by remember { mutableStateOf("Select Card Type") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var countdown by remember { mutableIntStateOf(30) }
+    // Longer than the driver's own card-detect window, deliberately.
+    //
+    // At thirty it was exactly equal to the CS20's, so the two expired together and the screen
+    // always won: the operator got this screen's generic "no card presented" while the driver's
+    // own verdict - a reader error, a code, a reason - was thrown away unread. This is meant to
+    // be the backstop for a driver that says nothing at all, not the thing that normally fires.
+    var countdown by remember { mutableIntStateOf(45) }
     var switchCountdown by remember { mutableIntStateOf(20) }
     var paymentResult by remember { mutableStateOf<CardPaymentResult?>(null) }
 
@@ -234,7 +240,7 @@ fun CardPaymentScreen(
                             onClick = {
                                 selectedNetwork = CardNetwork.ZIMSWITCH
                                 flowState = FlowState.WAITING_FOR_CARD
-                                countdown = 30
+                                countdown = 45
                                 statusMessage = "Tap or Insert Card"
 
                                 scope.launch {
@@ -286,7 +292,7 @@ fun CardPaymentScreen(
                             onClick = {
                                 selectedNetwork = CardNetwork.VISA_MASTERCARD
                                 flowState = FlowState.WAITING_FOR_CARD
-                                countdown = 30
+                                countdown = 45
                                 statusMessage = "Tap or Insert Card"
 
                                 scope.launch {
@@ -400,7 +406,7 @@ fun CardPaymentScreen(
                                 // timeout the cashier may want the other network, and the
                                 // driver call that was in flight has been cancelled.
                                 flowState = FlowState.SELECT_NETWORK
-                                countdown = 30
+                                countdown = 45
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -471,7 +477,7 @@ fun CardPaymentScreen(
                 TextButton(onClick = {
                     errorMessage = null
                     flowState = FlowState.SELECT_NETWORK
-                    countdown = 30
+                    countdown = 45
                 }) {
                     Text("Try Again")
                 }
