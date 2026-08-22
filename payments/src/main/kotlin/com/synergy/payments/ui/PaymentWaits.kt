@@ -18,4 +18,17 @@ internal object PaymentWaits {
      * bank that was about to reply.
      */
     const val SWITCH_SECONDS = 30
+
+    /**
+     * Waiting for a customer to present a card.
+     *
+     * The backstop, not the normal path: the driver has its own detect window and is expected
+     * to answer first with something specific — a reader error, a code, a reason. This only
+     * fires when the driver says nothing at all, so it has to outlast the driver's own bound
+     * rather than expire alongside it. At one point both were thirty and they raced, and the
+     * screen's generic "no card presented" won every time, throwing away the driver's answer.
+     *
+     * CS20 detects for 25 and gives up hard at 28, so this stays clear of both.
+     */
+    const val CARD_PRESENTATION_SECONDS = 30
 }
