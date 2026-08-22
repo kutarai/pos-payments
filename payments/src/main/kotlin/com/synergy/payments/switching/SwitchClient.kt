@@ -30,7 +30,10 @@ class SwitchClient(private val endpointProvider: () -> Endpoint?) {
 
     companion object {
         private const val TAG = "SwitchClient"
-        private const val AUTHORISE_DEADLINE_SECONDS = 20L
+        // Thirty, matching what the screens count down from. It was twenty while the QR
+        // screen waited thirty, so on that method the RPC gave up ten seconds before the
+        // countdown the cashier was watching had finished.
+        private const val AUTHORISE_DEADLINE_SECONDS = 30L
         private const val MANAGEMENT_DEADLINE_SECONDS = 15L
     }
 

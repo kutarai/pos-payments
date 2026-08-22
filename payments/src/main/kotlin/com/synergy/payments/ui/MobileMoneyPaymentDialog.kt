@@ -60,7 +60,7 @@ fun MobileMoneyPaymentDialog(
 ) {
     var flowState by remember { mutableStateOf(MobileMoneyFlowState.ENTERING_NUMBER) }
     var mobileNumber by remember { mutableStateOf("") }
-    var countdown by remember { mutableIntStateOf(20) }
+    var countdown by remember { mutableIntStateOf(PaymentWaits.SWITCH_SECONDS) }
     var failureMessage by remember { mutableStateOf("") }
     val coroutineScope = rememberCoroutineScope()
     var streamJob by remember { mutableStateOf<Job?>(null) }
@@ -72,7 +72,7 @@ fun MobileMoneyPaymentDialog(
         paymentReference = ref
         confirmedMobileNumber = mobile
         flowState = MobileMoneyFlowState.WAITING_CONFIRMATION
-        countdown = 20
+        countdown = PaymentWaits.SWITCH_SECONDS
 
         streamJob?.cancel()
         streamJob = coroutineScope.launch {

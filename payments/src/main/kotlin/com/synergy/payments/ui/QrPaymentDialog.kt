@@ -65,7 +65,7 @@ fun QrPaymentDialog(
     onDismiss: () -> Unit
 ) {
     var flowState by remember { mutableStateOf(QrFlowState.DISPLAYING_QR) }
-    var countdown by remember { mutableIntStateOf(30) }
+    var countdown by remember { mutableIntStateOf(PaymentWaits.SWITCH_SECONDS) }
     // Why it ended. A declined payment, a customer who never scanned, and a switch that could
     // not be reached were all announced as "Payment not received" - true of all three and
     // useful for none, and the one an operator most needs to tell apart is the one where the
@@ -311,7 +311,7 @@ fun QrPaymentDialog(
                             onClick = {
                                 // Generate fresh QR with new payment reference
                                 generateQr()
-                                countdown = 30
+                                countdown = PaymentWaits.SWITCH_SECONDS
                                 failureMessage = "Payment not received"
                                 flowState = QrFlowState.DISPLAYING_QR
                                 // Stream auto-starts via LaunchedEffect(paymentReference)

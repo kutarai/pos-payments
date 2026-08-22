@@ -116,7 +116,7 @@ fun CardPaymentScreen(
     // own verdict - a reader error, a code, a reason - was thrown away unread. This is meant to
     // be the backstop for a driver that says nothing at all, not the thing that normally fires.
     var countdown by remember { mutableIntStateOf(45) }
-    var switchCountdown by remember { mutableIntStateOf(20) }
+    var switchCountdown by remember { mutableIntStateOf(PaymentWaits.SWITCH_SECONDS) }
     var paymentResult by remember { mutableStateOf<CardPaymentResult?>(null) }
 
     // Which run of the card flow the screen is showing. Cancelling a driver does not make its
@@ -148,7 +148,7 @@ fun CardPaymentScreen(
     // Countdown timer while waiting for switch response
     LaunchedEffect(flowState) {
         if (flowState == FlowState.ONLINE_AUTH) {
-            switchCountdown = 20
+            switchCountdown = PaymentWaits.SWITCH_SECONDS
             while (switchCountdown > 0 && flowState == FlowState.ONLINE_AUTH) {
                 kotlinx.coroutines.delay(1000)
                 switchCountdown--
