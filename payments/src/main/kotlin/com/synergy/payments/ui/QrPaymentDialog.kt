@@ -30,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.Serializable
+import java.util.UUID
 
 sealed class QrPaymentResult : Serializable {
     data class Success(
@@ -44,6 +45,14 @@ sealed class QrPaymentResult : Serializable {
 }
 
 private enum class QrFlowState {
+    /**
+     * Opened the session, waiting for the switch to send the code back.
+     *
+     * A state of its own rather than a blank QR frame: the till has nothing to show yet, and a
+     * customer holding a phone at an empty square is a customer who has been told to scan
+     * something that is not there.
+     */
+    AWAITING_QR,
     DISPLAYING_QR,
     WAITING_CONFIRMATION,
     APPROVED,
@@ -56,15 +65,13 @@ private const val TAG = "QrPaymentDialog"
 fun QrPaymentDialog(
     amount: Money,
     identity: TerminalSnapshot,
-    merchantName: String,
-    receiptNumber: String,
     latitude: Double,
     longitude: Double,
     switchClient: SwitchClient,
     onResult: (QrPaymentResult) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var flowState by remember { mutableStateOf(QrFlowState.DISPLAYING_QR) }
+    var flowState by remember { mutableStateOf(QrFlowState.AWAITING_QR) }
     var countdown by remember { mutableIntStateOf(PaymentWaits.SWITCH_SECONDS) }
     // Why it ended. A declined payment, a customer who never scanned, and a switch that could
     // not be reached were all announced as "Payment not received" - true of all three and
@@ -74,36 +81,36 @@ fun QrPaymentDialog(
     val coroutineScope = rememberCoroutineScope()
     var streamJob by remember { mutableStateOf<Job?>(null) }
 
-    // Mutable QR data — regenerated on each retry so the switch gets a fresh reference
+    // The reference is ours and the payload is the switch's. Both are replaced on a retry:
+    // a fresh reference opens a new session, and the code that belongs to the old one must not
+    // stay on screen where somebody could still scan it.
     var qrPayload by remember { mutableStateOf("") }
     var paymentReference by remember { mutableStateOf("") }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // Generate QR data (called on first composition and on retry)
-    fun generateQr() {
-        val (payload, reference) = EmvcoQrGenerator.generatePayload(
-            merchantId = identity.merchantId.orEmpty(),
-            terminalId = identity.terminalId ?: identity.deviceId.orEmpty(),
-            merchantName = merchantName,
-            currency = amount.currency,
-            receiptNumber = receiptNumber,
-            amount = amount.amount
-        )
-        qrPayload = payload
-        paymentReference = reference
-        qrBitmap = EmvcoQrGenerator.generateBitmap(payload, size = 512)
-        Log.d(TAG, "Generated QR: ref=$reference")
+    /**
+     * Opens a new sale.
+     *
+     * Only the reference is minted here — it is this terminal's idempotency key for the
+     * session. The payload arrives from the switch with QR_PENDING, because the scheme's
+     * merchant number, the signature over it and the reference inside it all belong to the
+     * switch that issues them.
+     */
+    fun newSale() {
+        qrPayload = ""
+        qrBitmap = null
+        flowState = QrFlowState.AWAITING_QR
+        paymentReference = "QR${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
+        Log.d(TAG, "Opening sale: ref=$paymentReference")
     }
 
-    // Generate on first composition
     LaunchedEffect(Unit) {
-        generateQr()
+        newSale()
     }
 
     // Function to start/restart the gRPC stream
     fun startStream() {
         val currentRef = paymentReference
-        val currentPayload = qrPayload
         if (currentRef.isEmpty()) return
 
         streamJob?.cancel()
@@ -114,7 +121,10 @@ fun QrPaymentDialog(
                     paymentReference = currentRef,
                     currency = amount.currency,
                     amountMinor = (amount.amount * 100).toLong(),
-                    qrPayload = currentPayload,
+                    // The switch mints the payload; this is what the till believes it is
+                    // showing, which on the first request is nothing. Kept so the field means
+                    // "what was on screen" for the switch's own record.
+                    qrPayload = qrPayload,
                     latitude = latitude,
                     longitude = longitude,
                 )
@@ -127,7 +137,18 @@ fun QrPaymentDialog(
 
                     when (update.status) {
                         QrPaymentStatus.QR_PENDING -> {
-                            flowState = QrFlowState.WAITING_CONFIRMATION
+                            // Empty means the switch registered the session but sent no code.
+                            // Nothing scannable can follow, so it is failed here rather than
+                            // left to the countdown to blame on a customer who never saw one.
+                            if (update.qrPayload.isEmpty()) {
+                                Log.e(TAG, "Switch sent no QR payload: ref=$currentRef")
+                                failureMessage = "The bank did not send a QR code"
+                                flowState = QrFlowState.TIMEOUT
+                            } else {
+                                qrPayload = update.qrPayload
+                                qrBitmap = EmvcoQrGenerator.generateBitmap(update.qrPayload, size = 512)
+                                flowState = QrFlowState.WAITING_CONFIRMATION
+                            }
                         }
                         QrPaymentStatus.QR_CLAIMED -> {
                             flowState = QrFlowState.APPROVED
@@ -136,7 +157,7 @@ fun QrPaymentDialog(
                                 QrPaymentResult.Success(
                                     paymentReference = currentRef,
                                     authorizationCode = update.authorizationCode.ifEmpty { null },
-                                    qrCodeData = currentPayload
+                                    qrCodeData = qrPayload
                                 )
                             )
                         }
@@ -197,7 +218,8 @@ fun QrPaymentDialog(
     // Once a QR code is on screen the customer may already have scanned it and
     // the switch may already be holding the payment. A stray back press must not
     // abandon that - only Cancel, which the operator presses deliberately.
-    val countingDown = flowState == QrFlowState.DISPLAYING_QR ||
+    val countingDown = flowState == QrFlowState.AWAITING_QR ||
+        flowState == QrFlowState.DISPLAYING_QR ||
         flowState == QrFlowState.WAITING_CONFIRMATION
 
     Dialog(
@@ -261,6 +283,29 @@ fun QrPaymentDialog(
                 }
 
                 when (flowState) {
+                    QrFlowState.AWAITING_QR -> {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        CircularProgressIndicator()
+                        Text(
+                            "Preparing the code",
+                            style = MaterialTheme.typography.bodyLarge,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        OutlinedButton(
+                            onClick = {
+                                streamJob?.cancel()
+                                onResult(QrPaymentResult.Cancelled)
+                                onDismiss()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Cancel")
+                        }
+                    }
+
                     QrFlowState.DISPLAYING_QR, QrFlowState.WAITING_CONFIRMATION -> {
                         qrBitmap?.let { bitmap ->
                             Image(
@@ -309,12 +354,12 @@ fun QrPaymentDialog(
 
                         Button(
                             onClick = {
-                                // Generate fresh QR with new payment reference
-                                generateQr()
+                                // A new reference, and the screen back to waiting for the
+                                // switch's code. newSale() sets the state itself; the stream
+                                // auto-starts via LaunchedEffect(paymentReference).
+                                newSale()
                                 countdown = PaymentWaits.SWITCH_SECONDS
                                 failureMessage = "Payment not received"
-                                flowState = QrFlowState.DISPLAYING_QR
-                                // Stream auto-starts via LaunchedEffect(paymentReference)
                             },
                             modifier = Modifier
                                 .fillMaxWidth()

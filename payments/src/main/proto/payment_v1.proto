@@ -46,6 +46,14 @@ message QrPaymentUpdate {
   string provider_reference = 3; // Payment provider's reference
   string message = 4;            // Human-readable status message
   string timestamp = 5;          // ISO 8601
+
+  // The EMVCo payload this till is to display, minted and signed by the national QR switch
+  // from the outlet's own record. Sent with QR_PENDING and empty on every later update.
+  //
+  // The till renders this rather than composing its own. The scheme's merchant number, the
+  // signature and the reference all belong to the switch that issues them; a payload built
+  // here identifies the merchant by a number the scheme has never been told.
+  string qr_payload = 6;
 }
 
 enum QrPaymentStatus {
