@@ -108,9 +108,10 @@ fun SynergyPaymentFlow(
         PaymentStep.Qr -> QrPaymentDialog(
             amount = amount,
             identity = config.identity,
-            // The merchant name and the receipt number are no longer passed: the switch mints
-            // the payload, so the name in tag 59 is the scheme's record of it rather than this
-            // deployment's, and there is nowhere left here to put a bill number.
+            // The merchant name is no longer passed: the switch mints the payload, so tag 59
+            // carries the scheme's record of the trading name rather than this deployment's.
+            // The receipt number still is — it becomes the bill number in tag 62.
+            receiptNumber = config.receiptNumber,
             latitude = config.latitude,
             longitude = config.longitude,
             switchClient = switchClient,

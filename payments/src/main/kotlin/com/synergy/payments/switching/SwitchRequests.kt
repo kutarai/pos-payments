@@ -20,6 +20,7 @@ object SwitchRequests {
         currency: String,
         amountMinor: Long,
         qrPayload: String,
+        billNumber: String,
         latitude: Double,
         longitude: Double,
     ): QrPaymentRequest = QrPaymentRequest.newBuilder()
@@ -31,6 +32,9 @@ object SwitchRequests {
         .setCurrency(currency)
         .setAmount(amountMinor)
         .setQrPayload(qrPayload)
+        // The till's receipt number. The switch puts it in the payload's bill number, so the
+        // number a cashier reads off the slip is the one in the code the customer scanned.
+        .setBillNumber(billNumber)
         .setLatitude(latitude)
         .setLongitude(longitude)
         .build()

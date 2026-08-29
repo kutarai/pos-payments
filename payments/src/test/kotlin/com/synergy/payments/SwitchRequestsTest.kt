@@ -33,6 +33,7 @@ class SwitchRequestsTest {
             currency = "USD",
             amountMinor = 1250,
             qrPayload = "000201...",
+            billNumber = "RCT-00417",
             latitude = -17.8,
             longitude = 31.0,
         )
@@ -43,6 +44,9 @@ class SwitchRequestsTest {
         assertEquals("MERCH-7", request.merchantId)
         assertEquals("QR123", request.paymentReference)
         assertEquals(1250L, request.amount)
+        // The switch renders this into the payload's bill number, so the number on the slip in
+        // the cashier's hand is the one inside the code the customer scanned.
+        assertEquals("RCT-00417", request.billNumber)
     }
 
     @Test
@@ -67,7 +71,7 @@ class SwitchRequestsTest {
     fun `an unassigned terminal sends an empty terminal id, not a substituted one`() {
         val unassigned = provisioned.copy(terminalId = null)
 
-        val qr = SwitchRequests.qr(unassigned, "QR1", "USD", 100, "payload", 0.0, 0.0)
+        val qr = SwitchRequests.qr(unassigned, "QR1", "USD", 100, "payload", "RCT-1", 0.0, 0.0)
         val mobile = SwitchRequests.mobileMoney(unassigned, "MOB1", "USD", 100, "0771234567", 0.0, 0.0)
 
         // Empty, because the switch resolves the bank's number from the device id. Filling this

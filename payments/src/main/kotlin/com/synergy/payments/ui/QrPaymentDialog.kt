@@ -65,6 +65,7 @@ private const val TAG = "QrPaymentDialog"
 fun QrPaymentDialog(
     amount: Money,
     identity: TerminalSnapshot,
+    receiptNumber: String,
     latitude: Double,
     longitude: Double,
     switchClient: SwitchClient,
@@ -125,6 +126,7 @@ fun QrPaymentDialog(
                     // showing, which on the first request is nothing. Kept so the field means
                     // "what was on screen" for the switch's own record.
                     qrPayload = qrPayload,
+                    billNumber = receiptNumber,
                     latitude = latitude,
                     longitude = longitude,
                 )

@@ -38,6 +38,12 @@ message QrPaymentRequest {
   // recorded for cross-check; the switch's own record is what it acts on.
   string terminal_id = 9;
   string serial_number = 10;
+
+  // The till's own receipt number, carried into the QR payload's bill number (tag 62, sub-tag
+  // 01). It is what a cashier and a customer have in front of them when a payment is queried;
+  // the scheme's reference means nothing to either of them. Clipped to EMVCo's 25 characters
+  // where the code is rendered, not here.
+  string bill_number = 11;
 }
 
 message QrPaymentUpdate {
