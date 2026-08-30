@@ -109,7 +109,7 @@ fun QrPaymentDialog(
     fun newSale() {
         qrPayload = ""
         qrBitmap = null
-        val reference = "QR${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
+        val reference = "${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
 
         val schemeMerchantId = identity.qrMerchantId
         if (schemeMerchantId == null) {
