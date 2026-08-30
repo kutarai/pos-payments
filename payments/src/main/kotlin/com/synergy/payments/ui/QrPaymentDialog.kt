@@ -20,6 +20,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.synergy.payments.model.Money
 import com.synergy.payments.qr.EmvcoQrGenerator
+import com.synergy.payments.qr.QrMacSealers
+import com.synergy.payments.card.TerminalConfig
 import com.synergy.payments.grpc.payment.QrPaymentStatus
 import com.synergy.payments.switching.SwitchClient
 import com.synergy.payments.switching.SwitchRequests
@@ -65,7 +67,14 @@ private const val TAG = "QrPaymentDialog"
 fun QrPaymentDialog(
     amount: Money,
     identity: TerminalSnapshot,
+    merchantName: String,
     receiptNumber: String,
+    /**
+     * Tag 60. Not in managed configuration, because the switch does not hold one — it is the
+     * town on a printed receipt, and a wrong one costs a wallet a line of display rather than
+     * a misrouted payment. The scheme's own record is what a payer's bank shows.
+     */
+    merchantCity: String = "HARARE",
     latitude: Double,
     longitude: Double,
     switchClient: SwitchClient,
@@ -100,9 +109,46 @@ fun QrPaymentDialog(
     fun newSale() {
         qrPayload = ""
         qrBitmap = null
-        flowState = QrFlowState.AWAITING_QR
-        paymentReference = "QR${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
-        Log.d(TAG, "Opening sale: ref=$paymentReference")
+        val reference = "QR${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
+
+        val schemeMerchantId = identity.qrMerchantId
+        if (schemeMerchantId == null) {
+            // Not a failure of this sale — the merchant is not on the scheme at all, and no
+            // retry will change that. Saying so is better than a countdown that ends in
+            // "Payment not received", which reads as the customer's fault.
+            Log.w(TAG, "No qr_merchant_id in managed configuration; this merchant is not on the scheme")
+            failureMessage = "This merchant is not set up for QR payments"
+            flowState = QrFlowState.TIMEOUT
+            return
+        }
+
+        val payload = EmvcoQrGenerator.generatePayload(
+            qrMerchantId = schemeMerchantId,
+            qrOutletNumber = identity.qrOutlet,
+            merchantName = merchantName,
+            merchantCity = merchantCity,
+            merchantCategoryCode = TerminalConfig.DEFAULT_MERCHANT_CATEGORY_CODE,
+            currency = amount.currency,
+            amount = amount.amount,
+            paymentReference = reference,
+            billNumber = receiptNumber,
+            sealer = QrMacSealers.get(),
+        )
+
+        if (payload == null) {
+            // The PED could not seal it: no MAC key injected, or the hardware refused. The
+            // switch would refuse the code, so it is not put on screen for a customer to scan.
+            Log.e(TAG, "Could not seal the QR payload; refusing to present an unsealed code")
+            failureMessage = "This terminal cannot secure a QR code — call support"
+            flowState = QrFlowState.TIMEOUT
+            return
+        }
+
+        paymentReference = reference
+        qrPayload = payload
+        qrBitmap = EmvcoQrGenerator.generateBitmap(payload, size = 512)
+        flowState = QrFlowState.DISPLAYING_QR
+        Log.d(TAG, "Opening sale: ref=$reference, payload=${payload.length} chars")
     }
 
     LaunchedEffect(Unit) {
@@ -122,9 +168,8 @@ fun QrPaymentDialog(
                     paymentReference = currentRef,
                     currency = amount.currency,
                     amountMinor = (amount.amount * 100).toLong(),
-                    // The switch mints the payload; this is what the till believes it is
-                    // showing, which on the first request is nothing. Kept so the field means
-                    // "what was on screen" for the switch's own record.
+                    // What is on the screen, sealed. The switch verifies the tag-80 MAC
+                    // against this terminal's key before it opens a hold.
                     qrPayload = qrPayload,
                     billNumber = receiptNumber,
                     latitude = latitude,
@@ -138,19 +183,10 @@ fun QrPaymentDialog(
                     Log.d(TAG, "QR update: status=${update.status}, ref=$currentRef")
 
                     when (update.status) {
+                        // The hold is open and the code the customer is already looking at
+                        // was accepted. The switch sends no payload back — this till minted it.
                         QrPaymentStatus.QR_PENDING -> {
-                            // Empty means the switch registered the session but sent no code.
-                            // Nothing scannable can follow, so it is failed here rather than
-                            // left to the countdown to blame on a customer who never saw one.
-                            if (update.qrPayload.isEmpty()) {
-                                Log.e(TAG, "Switch sent no QR payload: ref=$currentRef")
-                                failureMessage = "The bank did not send a QR code"
-                                flowState = QrFlowState.TIMEOUT
-                            } else {
-                                qrPayload = update.qrPayload
-                                qrBitmap = EmvcoQrGenerator.generateBitmap(update.qrPayload, size = 512)
-                                flowState = QrFlowState.WAITING_CONFIRMATION
-                            }
+                            flowState = QrFlowState.WAITING_CONFIRMATION
                         }
                         QrPaymentStatus.QR_CLAIMED -> {
                             flowState = QrFlowState.APPROVED

@@ -51,6 +51,21 @@ data class TerminalSnapshot(
      * receipt. The seller's, not the customer's.
      */
     val taxIdentificationNumber: String?,
+    /**
+     * The merchant's number on the national QR scheme — its Merchant Account Information, what
+     * goes in a QR payload's tag 26, and what every switch routes the payment on.
+     *
+     * A different identifier from [merchantId], which is the acquiring switch's own and never
+     * leaves it. Null means the merchant is not enrolled on the scheme, in which case the
+     * switch sends no number at all rather than a blank one, and this till cannot present a
+     * code — see [canPresentQr].
+     */
+    val qrMerchantId: String?,
+    /**
+     * Which outlet of that merchant this till stands in. Null reads as 1, which is what the
+     * scheme means by a blank outlet.
+     */
+    val qrOutletNumber: Int?,
     val endpoint: Endpoint?,
     val serialNumber: String,
 ) {
@@ -63,16 +78,36 @@ data class TerminalSnapshot(
      */
     val isProvisioned: Boolean
         get() = deviceId != null && merchantId != null && endpoint != null
+
+    /**
+     * Whether this till can present a QR code.
+     *
+     * Stricter than [isProvisioned]: a terminal can take a card without its merchant being on
+     * the QR scheme. Without a scheme merchant number there is no tag 26 to build, so the
+     * honest answer at the till is "this merchant does not accept QR" rather than a code that
+     * routes nowhere.
+     */
+    val canPresentQr: Boolean
+        get() = isProvisioned && qrMerchantId != null
+
+    /** What the scheme means by a blank outlet (source spec §15). */
+    val qrOutlet: Int
+        get() = qrOutletNumber ?: DEFAULT_QR_OUTLET
     // Deliberately not merchantName or the TIN: both belong on the paperwork, and a receipt
     // missing a line is a worse receipt, not a wrong payment. Refusing to take money over
     // either would turn a typo in a policy into a closed counter.
 
     companion object {
+        /** What the scheme reads a blank outlet as, and what the switch sends when none is set. */
+        const val DEFAULT_QR_OUTLET = 1
+
         const val KEY_DEVICE_ID = "device_id"
         const val KEY_TERMINAL_ID = "terminal_id"
         const val KEY_MERCHANT_ID = "merchant_id"
         const val KEY_MERCHANT_NAME = "merchant_name"
         const val KEY_MERCHANT_TIN = "merchant_tin"
+        const val KEY_QR_MERCHANT_ID = "qr_merchant_id"
+        const val KEY_QR_OUTLET_NUMBER = "qr_outlet_number"
         const val KEY_SWITCH_ENDPOINT = "switch_endpoint"
 
         val KEYS = listOf(
@@ -81,6 +116,8 @@ data class TerminalSnapshot(
             KEY_MERCHANT_ID,
             KEY_MERCHANT_NAME,
             KEY_MERCHANT_TIN,
+            KEY_QR_MERCHANT_ID,
+            KEY_QR_OUTLET_NUMBER,
             KEY_SWITCH_ENDPOINT,
         )
 
@@ -90,6 +127,10 @@ data class TerminalSnapshot(
             merchantId = values[KEY_MERCHANT_ID].orNull(),
             merchantName = values[KEY_MERCHANT_NAME].orNull(),
             taxIdentificationNumber = values[KEY_MERCHANT_TIN].orNull(),
+            qrMerchantId = values[KEY_QR_MERCHANT_ID].orNull(),
+            // Delivered as a JSON number, so a reader that hands us everything as strings gives
+            // us digits; one that does not gives us nothing, and the default of 1 applies.
+            qrOutletNumber = values[KEY_QR_OUTLET_NUMBER].orNull()?.toIntOrNull(),
             endpoint = Endpoint.parse(values[KEY_SWITCH_ENDPOINT]),
             serialNumber = serialNumber,
         )
