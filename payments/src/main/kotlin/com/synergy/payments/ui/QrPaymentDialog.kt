@@ -163,12 +163,18 @@ fun QrPaymentDialog(
                                 )
                             )
                         }
+                        // The switch's own words when it has any: "This merchant is not
+                        // enrolled for QR" and "QR is temporarily unavailable" are different
+                        // problems with different people to call, and both were being shown as
+                        // "Payment not received" — which blames a customer who never saw a code.
                         QrPaymentStatus.QR_DECLINED -> {
-                            failureMessage = "Payment declined"
+                            Log.w(TAG, "Declined: ref=$currentRef, message=${update.message}")
+                            failureMessage = update.message.ifBlank { "Payment declined" }
                             flowState = QrFlowState.TIMEOUT
                         }
                         QrPaymentStatus.QR_TIMED_OUT -> {
-                            failureMessage = "Payment not received"
+                            Log.w(TAG, "Timed out: ref=$currentRef, message=${update.message}")
+                            failureMessage = update.message.ifBlank { "Payment not received" }
                             flowState = QrFlowState.TIMEOUT
                         }
                         else -> {}
