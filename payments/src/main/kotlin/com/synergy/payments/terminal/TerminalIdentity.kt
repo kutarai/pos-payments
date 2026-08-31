@@ -79,7 +79,17 @@ class TerminalIdentity(
 
     private fun read(): TerminalSnapshot {
         val restrictions = restrictionsManager.applicationRestrictions
-        val values = TerminalSnapshot.KEYS.associateWith { restrictions?.getString(it) }
+        // Read whatever type the DPC set, then render it as text for parse().
+        //
+        // getString() was used for every key, and a Bundle returns null — with a warning nobody
+        // reads — when the value is not the type asked for. qr_outlet_number arrives from the
+        // MDM as an Integer, so the number the policy actually set was discarded and every till
+        // fell back to outlet 1 while reporting the key as absent. Which outlet a payment came
+        // from is not a detail worth losing to a getter.
+        @Suppress("DEPRECATION")
+        val values = TerminalSnapshot.KEYS.associateWith { key ->
+            restrictions?.get(key)?.toString()?.takeIf { it.isNotBlank() }
+        }
         val snapshot = TerminalSnapshot.parse(values, serialProvider())
 
         // Say out loud what the policy contained.
