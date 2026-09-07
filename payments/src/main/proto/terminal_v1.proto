@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package synergy.terminal.v1;
+package unipay.terminal.v1;
 
-option csharp_namespace = "SynergySwitch.Protos.Terminal";
-option java_package = "com.synergy.payments.grpc.terminal";
+option csharp_namespace = "UniSwitch.Protos.Terminal";
+option java_package = "zw.co.unipay.payments.grpc.terminal";
 option java_multiple_files = true;
 
 // Terminal management service for POS device lifecycle.
@@ -16,6 +16,11 @@ service TerminalManagementService {
 
   // Server-streaming: push configuration/key updates to terminal
   rpc StreamUpdates(TerminalIdentifier) returns (stream TerminalUpdate);
+
+  // Record the X9.24-1 DUKPT Key Serial Number after the setup ceremony.
+  // Called by the setup app after PedWriteDukptIpek succeeds so the switch
+  // can cross-check incoming auth-message KSNs against the registered one.
+  rpc RegisterDukptKsn(RegisterDukptKsnRequest) returns (RegisterDukptKsnResponse);
 }
 
 message TerminalIdentifier {
@@ -50,6 +55,42 @@ message HeartbeatRequest {
   string timestamp = 2;              // ISO 8601
   int32 battery_level = 3;           // 0-100
   int64 transaction_count = 4;       // Total since last restart
+  // MDM telemetry (additive; older terminals simply leave these unset).
+  repeated AppInventoryItem app_inventory = 5;
+  string os_build = 6;
+  int32 sdk_int = 7;
+  int64 storage_free = 8;
+  int64 storage_total = 9;
+  string agent_version = 10;
+  int32 policy_version = 11;         // policy version the device has applied
+  bool policy_compliant = 12;
+  NetworkInfo network = 13;
+  // False means the OS may suspend the agent in Doze, so the command stream and its queued commands
+  // can go quiet on an idle terminal. It cannot be granted silently on Android 10, so it is a
+  // per-device provisioning step the fleet needs visibility of.
+  bool battery_unrestricted = 14;
+  // The device's current wrapping key. Sent on every heartbeat, not only at enrolment: the key can
+  // be regenerated -- a new agent build, a cleared keystore -- and a switch still holding the old
+  // public key would wrap PIN keys the device can no longer open, with nothing to explain why.
+  bytes device_public_key = 15;
+  string key_security_level = 16;
+  string key_mgf1_digest = 17;
+  // The PED's TR-34 key-receipt key, reported for the same reason and on the same terms as the
+  // Keystore key above: it can change under us -- a re-provisioned PED, a service reinstall -- and
+  // a switch still wrapping to the old one produces tokens the terminal cannot open.
+  bytes ped_public_key = 18;
+}
+
+message AppInventoryItem {
+  string package = 1;
+  int64 version_code = 2;
+  string version_name = 3;
+}
+
+message NetworkInfo {
+  string type = 1;                   // wifi / cellular / ethernet
+  string carrier = 2;
+  int32 signal = 3;
 }
 
 message HeartbeatResponse {
@@ -70,4 +111,15 @@ enum UpdateType {
   CAPK = 3;       // CA Public Key update
   MESSAGE = 4;    // Display message
   KEY = 5;        // Encryption key update
+  COMMAND = 6;    // MDM command envelope (payload = synergy.mdm.v1.DeviceCommandEnvelope)
+}
+
+message RegisterDukptKsnRequest {
+  string device_id = 1;
+  bytes ksn = 2;              // 10 bytes
+}
+
+message RegisterDukptKsnResponse {
+  bool success = 1;
+  string message = 2;
 }

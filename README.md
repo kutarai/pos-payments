@@ -6,7 +6,7 @@ Card (EMV contact, contactless and magstripe), mobile money, QR and cash — the
 conversation, the screens and the slip. Nothing in here knows what make of terminal it is running
 on, and nothing in here knows what is being sold.
 
-Used by SynergyPOS today. It is a library rather than part of that application because an EFT
+Used by one point-of-sale application today. It is a library rather than part of it because an EFT
 application on the same counter takes the same payments in the same way, and two copies of a
 payment flow drift apart in exactly the places that cost money.
 
@@ -17,7 +17,7 @@ payment flow drift apart in exactly the places that cost money.
 | `model` | `Money`, the `Payment` kinds, transaction type and status |
 | `terminal` | The ports a terminal implements — identity, PIN pad, scanner, onboard printer |
 | `card` | The EMV port, the `CardPaymentDriver` a screen drives, TLV parsing |
-| `switching` | gRPC to SynergySwitch, and the protos both sides share |
+| `switching` | gRPC to the payment switch, and the protos both sides share |
 | `qr` | EMVCo QR payloads and the bitmap a customer scans |
 | `cash` | `CashTender` — what is owed, what was handed over, what goes back |
 | `printing` | ESC/POS bytes, receipt layout, the Bluetooth transport |

@@ -9,7 +9,7 @@ plugins {
 }
 
 android {
-    namespace = "com.synergy.payments"
+    namespace = "zw.co.unipay.payments"
     compileSdk = 34
 
     defaultConfig {

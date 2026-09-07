@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package synergy.payment.v1;
+package unipay.payment.v1;
 
-option csharp_namespace = "SynergySwitch.Protos.Payment";
-option java_package = "com.synergy.payments.grpc.payment";
+option csharp_namespace = "UniSwitch.Protos.Payment";
+option java_package = "zw.co.unipay.payments.grpc.payment";
 option java_multiple_files = true;
 
 // ISO 20022 AcceptorAuthorisation mapped to gRPC.
