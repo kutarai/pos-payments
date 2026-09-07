@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -50,6 +51,9 @@ private enum class MobileMoneyFlowState {
 
 private const val MOBILE_MONEY_TAG = "MobileMoneyDialog"
 
+/** How long APPROVED stays up before the sale is handed back — long enough to be read. */
+private const val APPROVED_DWELL_MS = 1500L
+
 @Composable
 fun MobileMoneyPaymentDialog(
     amount: Money,
@@ -61,7 +65,15 @@ fun MobileMoneyPaymentDialog(
     var flowState by remember { mutableStateOf(MobileMoneyFlowState.ENTERING_NUMBER) }
     var mobileNumber by remember { mutableStateOf("") }
     var countdown by remember { mutableIntStateOf(PaymentWaits.SWITCH_SECONDS) }
+    // What a lapsed wait is called, in this screen's own number of seconds.
+    val timedOutMessage = "Timed out — no confirmation after ${PaymentWaits.SWITCH_SECONDS} seconds"
     var failureMessage by remember { mutableStateOf("") }
+    // Whether the countdown is what ended it, as opposed to a decline or an operator who
+    // pressed Cancel. The screen shows all of them the same way — a reason and a way out — but
+    // the till's record should not call a lapsed wait a cancellation.
+    var timedOut by remember { mutableStateOf(false) }
+    // Held for the hand-off below, which no longer happens inside the stream's coroutine.
+    var authorizationCode by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
     var streamJob by remember { mutableStateOf<Job?>(null) }
     var paymentReference by remember { mutableStateOf("") }
@@ -73,6 +85,8 @@ fun MobileMoneyPaymentDialog(
         confirmedMobileNumber = mobile
         flowState = MobileMoneyFlowState.WAITING_CONFIRMATION
         countdown = PaymentWaits.SWITCH_SECONDS
+        timedOut = false
+        authorizationCode = null
 
         streamJob?.cancel()
         streamJob = coroutineScope.launch {
@@ -93,16 +107,13 @@ fun MobileMoneyPaymentDialog(
                 flow.collect { update ->
                     Log.d(MOBILE_MONEY_TAG, "Mobile money update: status=${update.status}, ref=$ref")
                     when (update.status) {
+                        // Recorded, not concluded. The hand-off waits a moment so the cashier
+                        // can read APPROVED, and a moment spent inside this coroutine is a
+                        // moment in which cancelling the stream would swallow the sale — so it
+                        // happens below, where nothing cancels it.
                         MobileMoneyPaymentStatus.MOBILE_CONFIRMED -> {
+                            authorizationCode = update.authorizationCode.ifEmpty { null }
                             flowState = MobileMoneyFlowState.APPROVED
-                            delay(1500)
-                            onResult(
-                                MobileMoneyPaymentResult.Success(
-                                    paymentReference = ref,
-                                    authorizationCode = update.authorizationCode.ifEmpty { null },
-                                    mobileNumber = mobile
-                                )
-                            )
                         }
                         MobileMoneyPaymentStatus.MOBILE_DECLINED -> {
                             failureMessage = "Payment was declined"
@@ -124,14 +135,40 @@ fun MobileMoneyPaymentDialog(
         }
     }
 
-    // 20-second countdown — only runs while waiting for confirmation
+    // A payment the switch has confirmed is reported from here, and not from the stream that
+    // carried the news: that coroutine is cancelled on timeout and again on dismissal, and
+    // anything it still owed at the moment of a cancel is simply never delivered. Nothing
+    // cancels the composition but the dialog going away.
+    LaunchedEffect(flowState) {
+        if (flowState == MobileMoneyFlowState.APPROVED) {
+            delay(APPROVED_DWELL_MS)
+            onResult(
+                MobileMoneyPaymentResult.Success(
+                    paymentReference = paymentReference,
+                    authorizationCode = authorizationCode,
+                    mobileNumber = confirmedMobileNumber,
+                )
+            )
+        }
+    }
+
+    // The wait on the customer's phone, bounded. Thirty seconds — the comment here said twenty
+    // long after PaymentWaits became the one place that decides.
     LaunchedEffect(flowState, countdown) {
         if (flowState == MobileMoneyFlowState.WAITING_CONFIRMATION && countdown > 0) {
             delay(1000)
+
+            // Read again after the second, not only before it. A confirmation arriving during
+            // that second ends the wait there and then, but this effect is only torn down at
+            // the next recomposition — a frame away, and a frame is long enough for the lines
+            // below to cancel the stream out from under an approval.
+            if (flowState != MobileMoneyFlowState.WAITING_CONFIRMATION) return@LaunchedEffect
+
             countdown--
             if (countdown <= 0) {
+                timedOut = true
                 streamJob?.cancel()
-                failureMessage = "Payment timed out"
+                failureMessage = timedOutMessage
                 flowState = MobileMoneyFlowState.FAILED
             }
         }
@@ -141,30 +178,39 @@ fun MobileMoneyPaymentDialog(
         onDispose { streamJob?.cancel() }
     }
 
-    // Once the prompt has gone to the customer's phone the switch is holding the
-    // payment, and a stray back press must not abandon it. Entering the number is
-    // still safe to back out of, because nothing has been sent yet.
-    val awaitingCustomer = flowState == MobileMoneyFlowState.WAITING_CONFIRMATION
+    // Once the prompt has gone to the customer's phone the switch is holding the payment, and
+    // a stray back press must not abandon it. Entering the number is still safe to back out of,
+    // because nothing has been sent yet, and so is the ending screen. APPROVED is shut: the
+    // payment is confirmed and part way through being handed back, and a back press during that
+    // second would report a paid customer as a cancellation.
+    val dismissable = flowState == MobileMoneyFlowState.ENTERING_NUMBER ||
+        flowState == MobileMoneyFlowState.FAILED
 
     Dialog(
         onDismissRequest = {
-            if (!awaitingCustomer) {
+            if (dismissable) {
                 streamJob?.cancel()
-                onResult(MobileMoneyPaymentResult.Cancelled)
+                onResult(
+                    if (timedOut) MobileMoneyPaymentResult.Timeout
+                    else MobileMoneyPaymentResult.Cancelled
+                )
                 onDismiss()
             }
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            dismissOnBackPress = !awaitingCustomer,
+            dismissOnBackPress = dismissable,
             dismissOnClickOutside = false
         )
     ) {
+        // Full bleed, like every other payment step. These two keep their own
+        // layout rather than moving to PaymentScreenSurface: both were tuned to fit
+        // a short till screen — the QR one after its Cancel button was found cut off
+        // — and they carry their own scrolling to match. Wrapping tuned content in a
+        // second scroller would undo the tuning to gain a shared wrapper.
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            shape = RoundedCornerShape(16.dp)
+            modifier = Modifier.fillMaxSize(),
+            shape = RectangleShape
         ) {
             Column(
                 modifier = Modifier
@@ -221,7 +267,7 @@ fun MobileMoneyPaymentDialog(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            OutlinedButton(
+                            PaymentOutlinedButton(
                                 onClick = {
                                     streamJob?.cancel()
                                     onResult(MobileMoneyPaymentResult.Cancelled)
@@ -229,7 +275,7 @@ fun MobileMoneyPaymentDialog(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) { Text("Cancel") }
-                            Button(
+                            PaymentButton(
                                 onClick = { startPayment(mobileNumber.trim()) },
                                 modifier = Modifier.weight(1f),
                                 enabled = mobileNumber.isNotBlank()
@@ -250,7 +296,7 @@ fun MobileMoneyPaymentDialog(
                             textAlign = TextAlign.Center
                         )
                         PaymentCountdown(seconds = countdown, warnAt = 5)
-                        OutlinedButton(
+                        PaymentOutlinedButton(
                             onClick = {
                                 streamJob?.cancel()
                                 onResult(MobileMoneyPaymentResult.Cancelled)
@@ -275,7 +321,7 @@ fun MobileMoneyPaymentDialog(
                         PaymentErrorMessage(failureMessage)
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        Button(
+                        PaymentButton(
                             onClick = {
                                 // Pre-fill number from previous attempt and go back to input
                                 mobileNumber = confirmedMobileNumber
@@ -292,7 +338,7 @@ fun MobileMoneyPaymentDialog(
                             Text("Retry", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
 
-                        Button(
+                        PaymentButton(
                             onClick = {
                                 streamJob?.cancel()
                                 onResult(MobileMoneyPaymentResult.SwitchToCash)
@@ -309,10 +355,17 @@ fun MobileMoneyPaymentDialog(
                             Text("Pay with Cash", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
 
-                        OutlinedButton(
+                        PaymentOutlinedButton(
                             onClick = {
                                 streamJob?.cancel()
-                                onResult(MobileMoneyPaymentResult.Cancelled)
+                                // Cancel here acknowledges an ending, it does not cause one.
+                                // Whoever reconciles this sale wants the reason it did not
+                                // happen — a wait that ran out, not the button that closed the
+                                // message. The two Cancels on the earlier screens do cause it.
+                                onResult(
+                                    if (timedOut) MobileMoneyPaymentResult.Timeout
+                                    else MobileMoneyPaymentResult.Cancelled
+                                )
                                 onDismiss()
                             },
                             modifier = Modifier.fillMaxWidth()

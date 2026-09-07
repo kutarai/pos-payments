@@ -70,9 +70,35 @@ data class MobilePayment(
     val mobileNumber: String? = null
 ) : Payment()
 
+/**
+ * A sale settled in crypto.
+ *
+ * [amount] stays the bill's own currency, because that is what the customer owes
+ * and what the receipt says. What they sent is recorded beside it — the asset, the
+ * chain and the transaction, which are the only things anyone can look up
+ * afterwards if the payment is ever questioned.
+ */
+@Serializable
+data class CryptoPayment(
+    override val id: String,
+    override val transactionId: String,
+    override val amount: Money,
+    override val timestamp: Instant = Clock.System.now(),
+    override val status: PaymentStatus = PaymentStatus.PENDING,
+    override val method: PaymentMethod = PaymentMethod.CRYPTO,
+    override val reference: String? = null,
+    override val notes: String? = null,
+    val asset: String,
+    val chain: String,
+    /** What was sent, in whole tokens. A string because six to eighteen decimals is not a Double. */
+    val assetAmount: String,
+    val address: String? = null,
+    val txHash: String? = null,
+) : Payment()
+
 @Serializable
 enum class PaymentMethod {
-    CASH, CARD, MOBILE, CHECK, GIFT_CARD, LOYALTY_POINTS, OTHER
+    CASH, CARD, MOBILE, CRYPTO, CHECK, GIFT_CARD, LOYALTY_POINTS, OTHER
 }
 
 @Serializable

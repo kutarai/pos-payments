@@ -31,4 +31,16 @@ internal object PaymentWaits {
      * CS20 detects for 25 and gives up hard at 28, so this stays clear of both.
      */
     const val CARD_PRESENTATION_SECONDS = 30
+
+    /**
+     * Waiting for a crypto payment.
+     *
+     * Longer than the others on purpose, and it is the one wait that genuinely is a
+     * different thing. The rest are a bank owing an answer. This one is a customer
+     * unlocking a phone, opening a wallet, scanning, approving — and only then a
+     * chain burying the transaction deeply enough to be money. Holding it to thirty
+     * would give up on payments that were always going to arrive, while the customer
+     * watched them arrive.
+     */
+    const val CRYPTO_SECONDS = 90
 }

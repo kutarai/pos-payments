@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -48,20 +49,42 @@ sealed class QrPaymentResult : Serializable {
 
 private enum class QrFlowState {
     /**
-     * Opened the session, waiting for the switch to send the code back.
+     * The code is built and sealed, the switch has been told about it, and its acknowledgement
+     * has not arrived yet.
      *
-     * A state of its own rather than a blank QR frame: the till has nothing to show yet, and a
-     * customer holding a phone at an empty square is a customer who has been told to scan
-     * something that is not there.
+     * Nothing is on screen for this: a code the switch has not registered is one a customer can
+     * scan into a payment with nowhere to land, and the wallet's error then lands on somebody
+     * who did exactly what the till asked them to. The QR goes up on QR_PENDING, not before.
      */
     AWAITING_QR,
+
+    /**
+     * The switch has the code and the customer can scan it.
+     *
+     * There is no separate state for "scanned but not yet confirmed": between QR_PENDING and
+     * the payment landing the switch tells this till nothing, so it would be a state the till
+     * could never be told to enter.
+     */
     DISPLAYING_QR,
-    WAITING_CONFIRMATION,
+
+    /** The switch confirmed the payment. The screen says so, then the sale is handed back. */
     APPROVED,
-    TIMEOUT
+
+    /**
+     * The wait is over and no payment was taken: declined, never scanned, the bank unreachable,
+     * or this merchant not on the scheme at all.
+     *
+     * Not named after the countdown, because the countdown is only one of five ways in. It was
+     * called TIMEOUT while the other four also ended here, and a log line reading "timeout" for
+     * a merchant who was never enrolled sends somebody to go and look at the network.
+     */
+    FAILED
 }
 
 private const val TAG = "QrPaymentDialog"
+
+/** How long APPROVED stays up before the sale is handed back — long enough to be read. */
+private const val APPROVED_DWELL_MS = 1500L
 
 @Composable
 fun QrPaymentDialog(
@@ -83,11 +106,25 @@ fun QrPaymentDialog(
 ) {
     var flowState by remember { mutableStateOf(QrFlowState.AWAITING_QR) }
     var countdown by remember { mutableIntStateOf(PaymentWaits.SWITCH_SECONDS) }
+    // What a lapsed wait is called, in the terminal's own words and its own number of seconds.
+    // "Payment not received" was true of a timeout and of four other endings, and told an
+    // operator nothing about which of them they were looking at: whether to ask the customer to
+    // try again, or to ring the bank. Naming the clock is what separates it from the rest.
+    val timedOutMessage = "Timed out — no payment after ${PaymentWaits.SWITCH_SECONDS} seconds"
+
     // Why it ended. A declined payment, a customer who never scanned, and a switch that could
     // not be reached were all announced as "Payment not received" - true of all three and
     // useful for none, and the one an operator most needs to tell apart is the one where the
-    // problem is the bank rather than the customer.
-    var failureMessage by remember { mutableStateOf("Payment not received") }
+    // problem is the bank rather than the customer. This is the default because the countdown
+    // is the one ending that arrives without having set a reason of its own.
+    var failureMessage by remember { mutableStateOf(timedOutMessage) }
+    // Whether the countdown is what ended it, as opposed to a decline, a dead bank or an
+    // operator who pressed Cancel. The screen shows all of those the same way — a reason and a
+    // way out — but the till's record should not call a decline a timeout.
+    var timedOut by remember { mutableStateOf(false) }
+    // The switch's authorisation code, held for the hand-off below rather than read straight
+    // out of the update, because the hand-off no longer happens in the stream's coroutine.
+    var authorizationCode by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
     var streamJob by remember { mutableStateOf<Job?>(null) }
 
@@ -99,16 +136,22 @@ fun QrPaymentDialog(
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     /**
-     * Opens a new sale.
+     * Opens a new sale: mints the reference, composes the payload and seals it.
      *
-     * Only the reference is minted here — it is this terminal's idempotency key for the
-     * session. The payload arrives from the switch with QR_PENDING, because the scheme's
-     * merchant number, the signature over it and the reference inside it all belong to the
-     * switch that issues them.
+     * It displays nothing. The code reaches the screen only once the switch has acknowledged
+     * it — see [QrFlowState.AWAITING_QR] — so everything here happens before the switch is
+     * asked, and a payload this terminal cannot build or seal costs no round trip to find out.
      */
     fun newSale() {
         qrPayload = ""
         qrBitmap = null
+        timedOut = false
+        authorizationCode = null
+        // Cleared here, and no longer by the retry button, which set it on the line after this
+        // function had already run: a retry that failed again inside newSale — an unenrolled
+        // merchant, a PED that would not seal — had its real reason overwritten by the default
+        // a moment later, and the operator was told the payment had simply not arrived.
+        failureMessage = timedOutMessage
         val reference = "${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
 
         val schemeMerchantId = identity.qrMerchantId
@@ -118,7 +161,7 @@ fun QrPaymentDialog(
             // "Payment not received", which reads as the customer's fault.
             Log.w(TAG, "No qr_merchant_id in managed configuration; this merchant is not on the scheme")
             failureMessage = "This merchant is not set up for QR payments"
-            flowState = QrFlowState.TIMEOUT
+            flowState = QrFlowState.FAILED
             return
         }
 
@@ -140,14 +183,14 @@ fun QrPaymentDialog(
             // switch would refuse the code, so it is not put on screen for a customer to scan.
             Log.e(TAG, "Could not seal the QR payload; refusing to present an unsealed code")
             failureMessage = "This terminal cannot secure a QR code — call support"
-            flowState = QrFlowState.TIMEOUT
+            flowState = QrFlowState.FAILED
             return
         }
 
         paymentReference = reference
         qrPayload = payload
         qrBitmap = EmvcoQrGenerator.generateBitmap(payload, size = 512)
-        flowState = QrFlowState.DISPLAYING_QR
+        flowState = QrFlowState.AWAITING_QR
         Log.d(TAG, "Opening sale: ref=$reference, payload=${payload.length} chars")
     }
 
@@ -183,21 +226,25 @@ fun QrPaymentDialog(
                     Log.d(TAG, "QR update: status=${update.status}, ref=$currentRef")
 
                     when (update.status) {
-                        // The hold is open and the code the customer is already looking at
-                        // was accepted. The switch sends no payload back — this till minted it.
-                        QrPaymentStatus.QR_PENDING -> {
-                            flowState = QrFlowState.WAITING_CONFIRMATION
+                        // The switch has the code and the hold is open, so it goes on screen
+                        // now — and the clock starts again from a full thirty. The seconds
+                        // spent reaching the switch were not the customer's to spend: they are
+                        // being asked to scan as this arrives, and the wait before it was ours.
+                        // Only the first one moves anything. If the switch ever repeats
+                        // QR_PENDING — a keepalive, a re-send — a second reset would hand the
+                        // customer another thirty seconds each time it arrived, and a wait that
+                        // renews itself is one the cashier can never see the end of.
+                        QrPaymentStatus.QR_PENDING -> if (flowState == QrFlowState.AWAITING_QR) {
+                            flowState = QrFlowState.DISPLAYING_QR
+                            countdown = PaymentWaits.SWITCH_SECONDS
                         }
+                        // Recorded, not concluded. The hand-off waits a moment so the cashier
+                        // can read APPROVED, and a moment spent inside this coroutine is a
+                        // moment in which cancelling the stream would swallow the sale — so it
+                        // is done below, where nothing cancels it. See the effect that follows.
                         QrPaymentStatus.QR_CLAIMED -> {
+                            authorizationCode = update.authorizationCode.ifEmpty { null }
                             flowState = QrFlowState.APPROVED
-                            delay(1500)
-                            onResult(
-                                QrPaymentResult.Success(
-                                    paymentReference = currentRef,
-                                    authorizationCode = update.authorizationCode.ifEmpty { null },
-                                    qrCodeData = qrPayload
-                                )
-                            )
                         }
                         // The switch's own words when it has any: "This merchant is not
                         // enrolled for QR" and "QR is temporarily unavailable" are different
@@ -206,12 +253,12 @@ fun QrPaymentDialog(
                         QrPaymentStatus.QR_DECLINED -> {
                             Log.w(TAG, "Declined: ref=$currentRef, message=${update.message}")
                             failureMessage = update.message.ifBlank { "Payment declined" }
-                            flowState = QrFlowState.TIMEOUT
+                            flowState = QrFlowState.FAILED
                         }
                         QrPaymentStatus.QR_TIMED_OUT -> {
                             Log.w(TAG, "Timed out: ref=$currentRef, message=${update.message}")
-                            failureMessage = update.message.ifBlank { "Payment not received" }
-                            flowState = QrFlowState.TIMEOUT
+                            failureMessage = update.message.ifBlank { timedOutMessage }
+                            flowState = QrFlowState.FAILED
                         }
                         else -> {}
                     }
@@ -219,13 +266,21 @@ fun QrPaymentDialog(
             } catch (_: CancellationException) {
                 Log.d(TAG, "Stream cancelled: ref=$currentRef")
             } catch (e: Exception) {
-                // gRPC error — log but do NOT change flowState.
-                // The countdown timer will handle the timeout transition: the customer may
-                // still be paying, and the stream dropping is not proof that they did not.
-                // The reason is kept, though, so that if the countdown does run out the screen
-                // can say the bank could not be reached rather than blaming the customer.
-                Log.e(TAG, "Stream error (countdown still running): ref=$currentRef", e)
-                failureMessage = "Bank unreachable — could not confirm the payment"
+                Log.e(TAG, "Stream error: ref=$currentRef", e)
+
+                if (flowState == QrFlowState.AWAITING_QR) {
+                    // No code ever reached the screen, so there is no customer part way through
+                    // paying and nothing left to wait for. Ending it here hands the operator the
+                    // retry twenty-odd seconds before a countdown that can only ever expire.
+                    failureMessage = "Bank unreachable — no code was issued"
+                    flowState = QrFlowState.FAILED
+                } else {
+                    // The code is on screen and the customer may be paying against it right now;
+                    // the stream dropping is not proof that they did not. The countdown owns
+                    // this ending. The reason is kept so that when it does run out the screen
+                    // can say the bank could not be reached rather than blame the customer.
+                    failureMessage = "Bank unreachable — could not confirm the payment"
+                }
             }
         }
     }
@@ -237,17 +292,50 @@ fun QrPaymentDialog(
         }
     }
 
-    // 30-second countdown timer — this is the ONLY thing that triggers TIMEOUT
+    // A payment the switch has confirmed is reported from here, and not from the stream that
+    // carried the news. That coroutine is cancelled on timeout and again on dismissal; anything
+    // still owed at the moment of a cancel is simply never delivered, and a sale the customer
+    // has already paid for would vanish between the switch confirming it and the till hearing.
+    // Nothing cancels the composition but the dialog going away.
+    LaunchedEffect(flowState) {
+        if (flowState == QrFlowState.APPROVED) {
+            delay(APPROVED_DWELL_MS)
+            onResult(
+                QrPaymentResult.Success(
+                    paymentReference = paymentReference,
+                    authorizationCode = authorizationCode,
+                    qrCodeData = qrPayload,
+                )
+            )
+        }
+    }
+
+    // Thirty seconds, and it runs over the wait on the switch as well as the wait on the
+    // customer: a switch that never acknowledges the code would otherwise leave the till on a
+    // spinner with no ending but Cancel. QR_PENDING restarts it, so gating the display on the
+    // switch never costs the customer scanning time.
     LaunchedEffect(flowState, countdown) {
-        if ((flowState == QrFlowState.DISPLAYING_QR || flowState == QrFlowState.WAITING_CONFIRMATION)
+        if ((flowState == QrFlowState.AWAITING_QR || flowState == QrFlowState.DISPLAYING_QR)
             && countdown > 0
         ) {
             delay(1000)
+
+            // Read again after the second, not only before it. A switch response arriving
+            // during that second ends the wait there and then, but this effect is only torn
+            // down at the next recomposition — a frame away, and a frame is long enough for
+            // the lines below to cancel the stream out from under an approval and turn a paid
+            // sale into "Payment not received".
+            if (flowState != QrFlowState.AWAITING_QR && flowState != QrFlowState.DISPLAYING_QR) {
+                return@LaunchedEffect
+            }
+
             countdown--
             if (countdown <= 0) {
-                // Cancel the gRPC stream — signals switch to mark TIMED_OUT
+                timedOut = true
+                // Cancelling the stream is how the switch is told this till gave up; it marks
+                // the payment TIMED_OUT and stops holding it.
                 streamJob?.cancel()
-                flowState = QrFlowState.TIMEOUT
+                flowState = QrFlowState.FAILED
             }
         }
     }
@@ -259,32 +347,35 @@ fun QrPaymentDialog(
         }
     }
 
-    // Once a QR code is on screen the customer may already have scanned it and
-    // the switch may already be holding the payment. A stray back press must not
-    // abandon that - only Cancel, which the operator presses deliberately.
-    val countingDown = flowState == QrFlowState.AWAITING_QR ||
-        flowState == QrFlowState.DISPLAYING_QR ||
-        flowState == QrFlowState.WAITING_CONFIRMATION
+    // Only the ending screen can be dismissed. While a code is up the customer may already
+    // have scanned it and the switch may already be holding the payment, and a stray back press
+    // must not abandon that — only Cancel, which an operator presses deliberately. APPROVED is
+    // shut too: the sale is confirmed and part way through being handed back, and a back press
+    // during that second would report a paid customer as a cancellation.
+    val dismissable = flowState == QrFlowState.FAILED
 
     Dialog(
         onDismissRequest = {
-            if (!countingDown) {
+            if (dismissable) {
                 streamJob?.cancel()
-                onResult(QrPaymentResult.Cancelled)
+                onResult(if (timedOut) QrPaymentResult.Timeout else QrPaymentResult.Cancelled)
                 onDismiss()
             }
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            dismissOnBackPress = !countingDown,
+            dismissOnBackPress = dismissable,
             dismissOnClickOutside = false
         )
     ) {
+        // Full bleed, like every other payment step. These two keep their own
+        // layout rather than moving to PaymentScreenSurface: both were tuned to fit
+        // a short till screen — the QR one after its Cancel button was found cut off
+        // — and they carry their own scrolling to match. Wrapping tuned content in a
+        // second scroller would undo the tuning to gain a shared wrapper.
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            shape = RoundedCornerShape(16.dp)
+            modifier = Modifier.fillMaxSize(),
+            shape = RectangleShape
         ) {
             Column(
                 modifier = Modifier
@@ -329,16 +420,20 @@ fun QrPaymentDialog(
                 when (flowState) {
                     QrFlowState.AWAITING_QR -> {
                         Spacer(modifier = Modifier.height(24.dp))
-                        CircularProgressIndicator()
+                        // The ring the customer's own wait uses. A bare spinner said only that
+                        // something was happening; this says how much of the wait is left, and
+                        // an operator watching it run down is being told to look at the bank
+                        // rather than at the terminal.
+                        PaymentCountdown(seconds = countdown, warnAt = 10)
                         Text(
-                            "Preparing the code",
+                            "Registering with the bank",
                             style = MaterialTheme.typography.bodyLarge,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(24.dp))
 
-                        OutlinedButton(
+                        PaymentOutlinedButton(
                             onClick = {
                                 streamJob?.cancel()
                                 onResult(QrPaymentResult.Cancelled)
@@ -350,7 +445,7 @@ fun QrPaymentDialog(
                         }
                     }
 
-                    QrFlowState.DISPLAYING_QR, QrFlowState.WAITING_CONFIRMATION -> {
+                    QrFlowState.DISPLAYING_QR -> {
                         qrBitmap?.let { bitmap ->
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
@@ -369,7 +464,7 @@ fun QrPaymentDialog(
                         // Smaller than the other waits: the QR itself takes 200dp of this screen.
                         PaymentCountdown(seconds = countdown, diameter = 56.dp, warnAt = 10)
 
-                        OutlinedButton(
+                        PaymentOutlinedButton(
                             onClick = {
                                 streamJob?.cancel()
                                 onResult(QrPaymentResult.Cancelled)
@@ -392,18 +487,17 @@ fun QrPaymentDialog(
                         Spacer(modifier = Modifier.height(32.dp))
                     }
 
-                    QrFlowState.TIMEOUT -> {
+                    QrFlowState.FAILED -> {
                         PaymentErrorMessage(failureMessage)
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        Button(
+                        PaymentButton(
                             onClick = {
                                 // A new reference, and the screen back to waiting for the
                                 // switch's code. newSale() sets the state itself; the stream
                                 // auto-starts via LaunchedEffect(paymentReference).
                                 newSale()
                                 countdown = PaymentWaits.SWITCH_SECONDS
-                                failureMessage = "Payment not received"
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -420,7 +514,7 @@ fun QrPaymentDialog(
                             )
                         }
 
-                        Button(
+                        PaymentButton(
                             onClick = {
                                 streamJob?.cancel()
                                 onResult(QrPaymentResult.SwitchToCash)
@@ -441,10 +535,17 @@ fun QrPaymentDialog(
                             )
                         }
 
-                        OutlinedButton(
+                        PaymentOutlinedButton(
                             onClick = {
                                 streamJob?.cancel()
-                                onResult(QrPaymentResult.Cancelled)
+                                // Cancel here closes an ending, it does not cause one. Whoever
+                                // reconciles this sale wants the reason it did not happen — a
+                                // wait that ran out, not the button that acknowledged it. The
+                                // two Cancels on the waiting screens do cause it, and say so.
+                                onResult(
+                                    if (timedOut) QrPaymentResult.Timeout
+                                    else QrPaymentResult.Cancelled
+                                )
                                 onDismiss()
                             },
                             modifier = Modifier.fillMaxWidth()

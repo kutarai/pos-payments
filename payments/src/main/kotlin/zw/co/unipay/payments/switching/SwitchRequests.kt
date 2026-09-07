@@ -1,5 +1,6 @@
 package zw.co.unipay.payments.switching
 
+import zw.co.unipay.payments.grpc.payment.CryptoPaymentRequest
 import zw.co.unipay.payments.grpc.payment.MobileMoneyPaymentRequest
 import zw.co.unipay.payments.grpc.payment.QrPaymentRequest
 import zw.co.unipay.payments.terminal.TerminalSnapshot
@@ -37,6 +38,36 @@ object SwitchRequests {
         .setBillNumber(billNumber)
         .setLatitude(latitude)
         .setLongitude(longitude)
+        .build()
+
+    /**
+     * A crypto payment for this sale.
+     *
+     * The bill's own currency and amount go up, never a crypto figure: converting is
+     * the switch's job at the switch's rate, and a till that quoted its own would be
+     * offering a price nobody had agreed to honour.
+     */
+    fun crypto(
+        identity: TerminalSnapshot,
+        paymentReference: String,
+        currency: String,
+        amountMinor: Long,
+        billNumber: String,
+        asset: String = "",
+        chain: String = "",
+    ): CryptoPaymentRequest = CryptoPaymentRequest.newBuilder()
+        .setDeviceId(identity.deviceId.orEmpty())
+        .setTerminalId(identity.terminalId.orEmpty())
+        .setSerialNumber(identity.serialNumber)
+        .setMerchantId(identity.merchantId.orEmpty())
+        .setPaymentReference(paymentReference)
+        .setCurrency(currency)
+        .setAmount(amountMinor)
+        .setBillNumber(billNumber)
+        // Empty asks the switch to choose. A cashier should not be asked which chain
+        // settles fastest today.
+        .setAsset(asset)
+        .setChain(chain)
         .build()
 
     fun mobileMoney(

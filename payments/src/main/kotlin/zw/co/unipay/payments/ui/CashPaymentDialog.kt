@@ -60,19 +60,9 @@ internal fun CashPaymentDialog(
         }
     }
 
-    Dialog(
+    PaymentScreenSurface(
         onDismissRequest = { onResult(CashResult.Cancelled); onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = true, dismissOnClickOutside = false)
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
                 Text("Cash Payment", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
                 // Amount
@@ -166,8 +156,6 @@ internal fun CashPaymentDialog(
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Complete", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
                 }
-            }
-        }
     }
 }
 

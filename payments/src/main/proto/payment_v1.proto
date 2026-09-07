@@ -20,6 +20,11 @@ service PaymentService {
   // Push-initiated mobile money: switch sends a payment request to the customer's wallet
   // and streams status updates back to the terminal.
   rpc InitiateMobileMoneyPayment(MobileMoneyPaymentRequest) returns (stream MobileMoneyPaymentUpdate);
+
+  // Take payment in crypto. The till has no wallet and no way to read a chain, so
+  // the switch issues the receiving address and watches it, exactly as it mints
+  // the QR payload rather than letting the terminal compose one.
+  rpc InitiateCryptoPayment(CryptoPaymentRequest) returns (stream CryptoPaymentUpdate);
 }
 
 // ─── QR Payment ──────────────────────────────────────────────────────
@@ -53,12 +58,12 @@ message QrPaymentUpdate {
   string message = 4;            // Human-readable status message
   string timestamp = 5;          // ISO 8601
 
-  // The EMVCo payload this till is to display, minted and signed by the national QR switch
+  // The EMVCo payload the till is to display, minted and signed by the national QR switch
   // from the outlet's own record. Sent with QR_PENDING and empty on every later update.
   //
   // The till renders this rather than composing its own. The scheme's merchant number, the
   // signature and the reference all belong to the switch that issues them; a payload built
-  // here identifies the merchant by a number the scheme has never been told.
+  // on the terminal identifies the merchant by a number the scheme has never been told.
   string qr_payload = 6;
 }
 
@@ -219,6 +224,9 @@ message AcceptorAuthorisationResponse {
   string transaction_reference = 2;
   AuthorisationResult result = 3;
   string display_message = 4;       // Message to display on terminal
+  // Balance enquiry (transaction_type "BALC") result, from ISO 8583 field 54.
+  int64 available_balance = 5;      // minor units; 0 when not a balance enquiry
+  string balance_currency = 6;      // ISO 4217 alpha-3 (e.g. "USD")
 }
 
 message AuthorisationResult {
@@ -234,4 +242,67 @@ enum ResponseCode {
   DECL = 2;   // Declined
   PRMS = 3;   // Partial approval
   TECH = 4;   // Technical error
+}
+
+// ─── Crypto Payment ────────────────────────────────────────────────
+
+message CryptoPaymentRequest {
+  string device_id = 1;
+  string merchant_id = 2;
+  string payment_reference = 3;
+
+  // What the bill says, in its own currency and minor units. The customer is asked
+  // for whatever that converts to at the switch's rate — the till never quotes a
+  // crypto amount of its own.
+  string currency = 4;
+  int64 amount = 5;
+
+  string terminal_id = 6;
+  string serial_number = 7;
+  string bill_number = 8;
+
+  // What the customer wants to pay with. Empty asks the switch to choose, which is
+  // the usual case: a cashier should not be asked which chain settles fastest.
+  string asset = 9;
+  string chain = 10;
+}
+
+message CryptoPaymentUpdate {
+  CryptoPaymentStatus status = 1;
+
+  // A standard payment request — address, token contract and exact amount — for the
+  // customer's wallet to act on. Sent with CRYPTO_PENDING and empty afterwards.
+  //
+  // The till renders this rather than composing its own. A request built on the
+  // terminal would carry an address the terminal cannot prove it controls, and an
+  // amount converted at a rate nobody agreed.
+  string payment_uri = 2;
+
+  // Shown alongside the code, so a customer whose wallet will not scan can still
+  // pay, and one who wants to check what they are about to send can.
+  string address = 3;
+  string memo = 4;
+  string asset = 5;
+  string chain = 6;
+  string asset_amount = 7;
+
+  // How buried the payment is, and how buried it needs to be. A cashier watching a
+  // customer wait deserves to see it moving rather than a spinner.
+  int32 confirmations = 8;
+  int32 confirmations_required = 9;
+
+  string authorization_code = 10;
+  string provider_reference = 11;
+  string message = 12;
+  string timestamp = 13;
+}
+
+enum CryptoPaymentStatus {
+  CRYPTO_PAYMENT_STATUS_UNSPECIFIED = 0;
+  CRYPTO_PENDING = 1;    // Address issued, waiting for the customer to send
+  CRYPTO_SEEN = 2;       // On chain, not yet buried deeply enough to be money
+  CRYPTO_CONFIRMED = 3;  // Paid
+  CRYPTO_UNDERPAID = 4;  // Less arrived than was asked for
+  CRYPTO_TIMED_OUT = 5;  // Nothing arrived while the till was waiting
+  CRYPTO_DECLINED = 6;   // Refused — a screened address, or the switch would not take it
 }

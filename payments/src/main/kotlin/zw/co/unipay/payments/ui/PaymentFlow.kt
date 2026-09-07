@@ -40,7 +40,7 @@ import zw.co.unipay.payments.terminal.TerminalSnapshot
  *        a payment sent under no identity, or a borrowed one, settles to someone.
  */
 @Composable
-fun SynergyPaymentFlow(
+fun PaymentFlow(
     amount: Money,
     config: PaymentConfig,
     cardDriver: CardPaymentDriver,
@@ -57,6 +57,7 @@ fun SynergyPaymentFlow(
     val switchClient = remember { SwitchClient { config.identity.endpoint } }
 
     var screen by remember { mutableStateOf(PaymentStep.MethodSelection) }
+    var network by remember { mutableStateOf(cryptoNetworks.first()) }
 
     DisposableEffect(switchClient) {
         // shutdownNow, not shutdown: onDispose runs on the main thread, and shutdown()'s
@@ -76,6 +77,7 @@ fun SynergyPaymentFlow(
     BackHandler(enabled = true) {
         when (screen) {
             PaymentStep.MethodSelection -> finish(PaymentOutcome.Cancelled)
+            PaymentStep.Crypto -> screen = PaymentStep.CryptoNetwork
             // Back from a payment step returns to the method list rather than abandoning the
             // sale: a customer who changes their mind about how to pay has not changed their
             // mind about paying.
@@ -91,6 +93,7 @@ fun SynergyPaymentFlow(
             onCard = { if (cardPaymentEnabled && electronicPaymentsEnabled) screen = PaymentStep.Card },
             onQr = { if (electronicPaymentsEnabled) screen = PaymentStep.Qr },
             onMobileMoney = { if (electronicPaymentsEnabled) screen = PaymentStep.MobileMoney },
+            onCrypto = { if (electronicPaymentsEnabled) screen = PaymentStep.CryptoNetwork },
             onCash = { screen = PaymentStep.Cash },
             onDismiss = { finish(PaymentOutcome.Cancelled) },
             cardPaymentEnabled = cardPaymentEnabled && electronicPaymentsEnabled,
@@ -127,7 +130,15 @@ fun SynergyPaymentFlow(
                     // A cashier who has just told the customer "the QR didn't go through, do you
                     // have cash" should not have to start the payment again.
                     is QrPaymentResult.SwitchToCash -> { screen = PaymentStep.Cash }
-                    else -> finish(PaymentOutcome.Cancelled)
+                    // Neither ending is the end of the sale, and neither is the other. A wait
+                    // that lapsed and a wait an operator cut short both leave a customer still
+                    // standing at the counter wanting to pay, so both come back to the method
+                    // list — where Cash is one press away, the same answer back already gives.
+                    // Folding the timeout into Cancelled here ended the sale outright, and the
+                    // one method that could still have taken the money was the one the till
+                    // then stopped offering.
+                    QrPaymentResult.Timeout,
+                    QrPaymentResult.Cancelled -> screen = PaymentStep.MethodSelection
                 }
             },
             onDismiss = {},
@@ -149,7 +160,59 @@ fun SynergyPaymentFlow(
                     // A cashier who has just told the customer "the mobile money payment didn't
                     // go through, do you have cash" should not have to start the payment again.
                     is MobileMoneyPaymentResult.SwitchToCash -> { screen = PaymentStep.Cash }
-                    else -> finish(PaymentOutcome.Cancelled)
+                    // As on the QR path: a wait that lapsed and a wait an operator cut short
+                    // both leave a customer still wanting to pay, so both come back to the
+                    // method list where Cash is one press away, rather than ending the sale and
+                    // taking that last way of taking the money off the screen with it.
+                    MobileMoneyPaymentResult.Timeout,
+                    MobileMoneyPaymentResult.Declined,
+                    MobileMoneyPaymentResult.Cancelled -> screen = PaymentStep.MethodSelection
+                }
+            },
+            onDismiss = {},
+        )
+
+        PaymentStep.CryptoNetwork -> CryptoNetworkDialog(
+            paymentAmount = amount,
+            onNetwork = { chosen ->
+                network = chosen
+                screen = PaymentStep.Crypto
+            },
+            onBack = { screen = PaymentStep.MethodSelection },
+        )
+
+        PaymentStep.Crypto -> CryptoPaymentDialog(
+            amount = amount,
+            identity = config.identity,
+            receiptNumber = config.receiptNumber,
+            network = network,
+            switchClient = switchClient,
+            onResult = { result ->
+                when (result) {
+                    is CryptoPaymentResult.Success -> finish(
+                        PaymentOutcome.CryptoApproved(
+                            paymentReference = result.paymentReference,
+                            authorizationCode = result.authorizationCode,
+                            asset = result.asset,
+                            chain = result.chain,
+                            assetAmount = result.assetAmount,
+                        )
+                    )
+                    // As on every other rail: a cashier who has just said "the crypto
+                    // didn't go through, do you have cash" should not have to start
+                    // the sale again.
+                    is CryptoPaymentResult.SwitchToCash -> { screen = PaymentStep.Cash }
+                    // None of these end the sale. A customer whose wallet would not
+                    // scan, or who took too long, is still standing at the counter
+                    // wanting to pay — so all three come back to the method list where
+                    // cash is one press away.
+                    // Back to the network question rather than the method list: a
+                    // customer whose Tron payment lapsed may simply have meant to pay
+                    // on the other one, and making them choose the method again to
+                    // find out is a step for nothing.
+                    CryptoPaymentResult.Timeout,
+                    CryptoPaymentResult.Declined,
+                    CryptoPaymentResult.Cancelled -> screen = PaymentStep.CryptoNetwork
                 }
             },
             onDismiss = {},
@@ -222,6 +285,19 @@ sealed class PaymentOutcome {
         val mobileNumber: String,
     ) : PaymentOutcome()
 
+    /**
+     * The bill was settled in crypto. What the customer owed is still the bill's own
+     * currency; the asset, chain and amount are recorded beside it because they are
+     * the only things anyone can look up if the payment is ever questioned.
+     */
+    data class CryptoApproved(
+        val paymentReference: String,
+        val authorizationCode: String?,
+        val asset: String,
+        val chain: String,
+        val assetAmount: String,
+    ) : PaymentOutcome()
+
     data class CashCompleted(
         val tenderedAmount: Money,
         val changeAmount: Money,
@@ -231,7 +307,7 @@ sealed class PaymentOutcome {
     data object Cancelled : PaymentOutcome()
 }
 
-private enum class PaymentStep { MethodSelection, Card, Qr, MobileMoney, Cash }
+private enum class PaymentStep { MethodSelection, Card, Qr, MobileMoney, CryptoNetwork, Crypto, Cash }
 
 /**
  * The card step: runs the driver and turns its result into an outcome. Separate

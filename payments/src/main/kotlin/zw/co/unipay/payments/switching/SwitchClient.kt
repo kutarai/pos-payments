@@ -9,6 +9,8 @@ import zw.co.unipay.payments.grpc.payment.PaymentServiceGrpc
 import zw.co.unipay.payments.grpc.payment.PaymentServiceGrpcKt
 import zw.co.unipay.payments.grpc.payment.MobileMoneyPaymentRequest
 import zw.co.unipay.payments.grpc.payment.MobileMoneyPaymentUpdate
+import zw.co.unipay.payments.grpc.payment.CryptoPaymentRequest
+import zw.co.unipay.payments.grpc.payment.CryptoPaymentUpdate
 import zw.co.unipay.payments.grpc.payment.QrPaymentRequest
 import zw.co.unipay.payments.grpc.payment.QrPaymentUpdate
 import zw.co.unipay.payments.grpc.terminal.HeartbeatRequest
@@ -21,7 +23,7 @@ import kotlinx.coroutines.flow.Flow
 import java.util.concurrent.TimeUnit
 
 /**
- * gRPC client wrapper for SynergySwitch communication.
+ * gRPC client wrapper for talking to the payment switch.
  *
  * Uses blocking stubs for card authorisation (called from EMV kernel's AIDL thread),
  * and Kotlin coroutine stubs for streaming operations (QR payments).
@@ -117,6 +119,18 @@ class SwitchClient(private val endpointProvider: () -> Endpoint?) {
     fun initiateMobileMoneyPayment(request: MobileMoneyPaymentRequest): Flow<MobileMoneyPaymentUpdate> {
         Log.d(TAG, "Opening mobile money payment stream: ref=${request.paymentReference}, mobile=${request.mobileNumber}")
         return paymentCoroutineStub().initiateMobileMoneyPayment(request)
+    }
+
+    /**
+     * Open a server-streaming call for a crypto payment.
+     *
+     * The switch issues the receiving address and watches the chain; the till only
+     * renders what comes back and waits. Cancelling the scope closes the stream,
+     * which tells the switch nobody is watching for this payment any more.
+     */
+    fun initiateCryptoPayment(request: CryptoPaymentRequest): Flow<CryptoPaymentUpdate> {
+        Log.d(TAG, "Opening crypto payment stream: ref=${request.paymentReference}")
+        return paymentCoroutineStub().initiateCryptoPayment(request)
     }
 
     fun register(request: TerminalRegistrationRequest): TerminalRegistrationResponse {
