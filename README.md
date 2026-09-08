@@ -20,8 +20,10 @@ payment flow drift apart in exactly the places that cost money.
 | `switching` | gRPC to the payment switch, and the protos both sides share |
 | `qr` | EMVCo QR payloads and the bitmap a customer scans |
 | `cash` | `CashTender` — what is owed, what was handed over, what goes back |
-| `printing` | ESC/POS bytes, receipt layout, the Bluetooth transport |
 | `ui` | The card screen and the mobile-money, QR and cash dialogs |
+
+Printing — the Bluetooth and Wi-Fi Direct transports, printer settings, ESC/POS and the setup
+screen — lives in the sibling `Printers` library (`../Printers`), which both hosts use directly.
 
 ## Supporting a new terminal
 
