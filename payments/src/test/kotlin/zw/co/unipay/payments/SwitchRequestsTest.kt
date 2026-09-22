@@ -4,6 +4,7 @@ import zw.co.unipay.payments.switching.SwitchRequests
 import zw.co.unipay.payments.terminal.Endpoint
 import zw.co.unipay.payments.terminal.TerminalSnapshot
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -114,4 +115,86 @@ class SwitchRequestsTest {
         assertEquals("SN-123", request.environment.poi.serialNumber)
         assertEquals("MERCH-7", request.environment.merchant.id)
     }
+
+    // ----- the chip cryptogram reaching the issuer ----------------------------------------
+    //
+    // An online chip authorisation is the issuer verifying a cryptogram the card generated.
+    // Everything it needs to do that — the ARQC itself (9F26), the Issuer Application Data,
+    // the unpredictable number, the ATC, the AIP, the TVR, the amount and currency — travels
+    // as one BER-TLV blob in transaction.icc_related_data, read off the kernel at
+    // onOnlineProc and carried here untouched.
+    //
+    // The only existing card-authorisation test passed an EMPTY tag map, so nothing asserted
+    // that the cryptogram arrives at all. A change that emptied RAW_TLV would have kept the
+    // suite green while every chip transaction went up with no cryptogram for the issuer to
+    // check — which is indistinguishable, from the terminal, from a transaction that works.
+
+    /** A realistic kernel read: the concatenated TLVs, ARQC first. */
+    private val kernelTlv = mapOf(
+        "RAW_TLV" to (
+            "9F2608A1B2C3D4E5F60718" +      // Application Cryptogram (the ARQC)
+            "9F2701" + "80" +               // Cryptogram Information Data — ARQC requested
+            "9F1007" + "06010A03A00000" +   // Issuer Application Data
+            "9F3704" + "11223344" +         // Unpredictable Number
+            "9F3602" + "005B" +             // Application Transaction Counter
+            "8202" + "5C00" +               // Application Interchange Profile
+            "9505" + "0000000000"           // Terminal Verification Results
+        ),
+        "9F26" to "A1B2C3D4E5F60718",
+        "5A" to "4111111111111111",
+        "5F24" to "2812",
+    )
+
+    private fun authorisationWith(emv: Map<String, String>) =
+        zw.co.unipay.payments.switching.SwitchIntegration(
+            zw.co.unipay.payments.switching.SwitchClient { null }
+        ).buildAuthorisationRequest(
+            config = zw.co.unipay.payments.card.TerminalConfig(
+                terminalId = "TERM-42", merchantId = "MERCH-7", merchantName = "Redcliff Municipality",
+                deviceId = "DEV-0001", serialNumber = "SN-123",
+            ),
+            emvTlvData = emv,
+            pan = "4111111111111111",
+            encryptedPinBlock = null,
+            dukptKsn = null,
+            cardEntryMode = "ICC",
+            amount = 5867L,
+        )
+
+    @Test
+    fun `a chip authorisation carries the card's cryptogram to the issuer`() {
+        val icc = authorisationWith(kernelTlv).transaction.iccRelatedData
+        assertTrue("a chip transaction must not go up with empty ICC data", !icc.isEmpty)
+
+        val hex = icc.toByteArray().joinToString("") { "%02X".format(it) }
+        assertEquals("the blob is the kernel's TLV, byte for byte", kernelTlv["RAW_TLV"], hex)
+        assertTrue(
+            "the ARQC (9F26) must be present — without it the issuer has nothing to verify",
+            hex.contains("9F2608A1B2C3D4E5F60718"),
+        )
+    }
+
+    @Test
+    fun `the tags the issuer needs to verify the cryptogram travel with it`() {
+        val hex = authorisationWith(kernelTlv).transaction.iccRelatedData
+            .toByteArray().joinToString("") { "%02X".format(it) }
+        // An ARQC cannot be checked on its own: the issuer recomputes it from these.
+        for ((tag, what) in listOf(
+            "9F10" to "Issuer Application Data",
+            "9F37" to "Unpredictable Number",
+            "9F36" to "Application Transaction Counter",
+            "82" to "Application Interchange Profile",
+            "95" to "Terminal Verification Results",
+        )) {
+            assertTrue("$what ($tag) is missing from the ICC data", hex.contains(tag))
+        }
+    }
+
+    @Test
+    fun `a card read with no kernel TLV sends no ICC data, rather than something invented`() {
+        // A magstripe read has no cryptogram. Sending an empty field says so; sending a
+        // fabricated or partial one would have the issuer reject a valid swipe.
+        assertTrue(authorisationWith(emptyMap()).transaction.iccRelatedData.isEmpty)
+    }
 }
+
