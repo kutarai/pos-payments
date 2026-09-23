@@ -53,6 +53,17 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
             Log.d(TAG, "Authorisation request: PAN=${maskPan(pan)}, " +
                 "amount=$amount, entry=$cardEntryMode")
 
+            // What the issuer will recompute the cryptogram from. Logged in full because it is
+            // the only artefact that explains a refused cryptogram, and because it carries no
+            // PAN — 5A and 57 are not among the tags read into RAW_TLV.
+            val kernelIcc = emvTlvData["RAW_TLV"].orEmpty()
+            val icc = zw.co.unipay.payments.card.IccData.sanitise(kernelIcc)
+            Log.d(TAG, "ICC data: kernel=${kernelIcc.length / 2}B sent=${icc.hex.length / 2}B" +
+                (if (icc.droppedEmpty.isNotEmpty()) " droppedEmpty=${icc.droppedEmpty}" else "") +
+                (icc.problem?.let { " PROBLEM=$it" } ?: ""))
+            Log.d(TAG, "ICC kernel hex: $kernelIcc")
+            if (icc.hex != kernelIcc) Log.d(TAG, "ICC sent hex:   ${icc.hex}")
+
             val response = switchClient.authorise(request)
 
             // emvResponseCode and displayMessage carry the reason. Logging only the verdict left
@@ -120,8 +131,15 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
         val track2 = emvTlvData["57"] ?: ""
         val panSeqNo = emvTlvData["5F34"] ?: ""
 
-        // Raw BER-TLV ICC data for switch-side EMV processing
-        val iccData = emvTlvData["RAW_TLV"]?.let { hexToBytes(it) } ?: ByteArray(0)
+        // The BER-TLV the issuer recomputes the cryptogram from — parsed rather than
+        // forwarded. The kernel answers getTlvList with one entry per tag ASKED FOR, so every
+        // tag the card did not supply comes back with length zero; shipping that verbatim sent
+        // an empty Issuer Application Data and an empty ATC to an issuer being asked to verify
+        // a cryptogram against them. See IccData.
+        // Kept free of logging on purpose: this function is what the tests call to assert what
+        // the issuer receives, and a Log call in here is not mocked on the JVM.
+        val cleanIcc = zw.co.unipay.payments.card.IccData.forIssuer(emvTlvData["RAW_TLV"].orEmpty())
+        val iccData = if (cleanIcc.isEmpty()) ByteArray(0) else hexToBytes(cleanIcc)
 
         // Map card entry mode string to protobuf enum
         val entryMode = when (cardEntryMode) {
