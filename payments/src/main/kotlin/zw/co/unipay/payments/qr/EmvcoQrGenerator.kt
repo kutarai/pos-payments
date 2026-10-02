@@ -23,10 +23,10 @@ object EmvcoQrGenerator {
     private const val MERCHANT_TEMPLATE = "26"
 
     /**
-     * The MAC template. EMVCo reserves 80–99 for unreserved templates, which is what this is;
+     * The seal template. EMVCo reserves 80–99 for unreserved templates, which is what this is;
      * 26–51 is Merchant Account Information and a seal is not that.
      */
-    private const val MAC_TEMPLATE = "80"
+    private const val SEAL_TEMPLATE = "80"
 
     private const val CRC_TAG = "63"
     private const val ADDITIONAL_DATA = "62"
@@ -37,6 +37,9 @@ object EmvcoQrGenerator {
     private const val MERCHANT_NAME_LIMIT = 25
     private const val MERCHANT_CITY_LIMIT = 15
     private const val BILL_NUMBER_LIMIT = 25
+
+    /** The most a TLV value can hold: its length is two decimal digits. */
+    private const val TLV_MAX = 99
 
     /** ISO 4217 alpha to numeric, for tag 53. */
     private fun currencyToNumeric(alpha: String): String = when (alpha.uppercase()) {
@@ -70,7 +73,7 @@ object EmvcoQrGenerator {
         paymentReference: String,
         billNumber: String,
         countryCode: String = "ZW",
-        sealer: QrMacSealer?,
+        sealer: QrSealer?,
     ): String? {
         val tags = StringBuilder()
 
@@ -98,16 +101,20 @@ object EmvcoQrGenerator {
         }
         tags.append(tlv(ADDITIONAL_DATA, additional))
 
-        // The MAC covers everything above: merchant identity, amount, reference. It cannot
-        // cover the tag-80 template that carries it, nor the CRC, which changes when tag 80 is
-        // appended. The switch reverses this by removing tag 80 and the CRC by offset —
-        // substring removal on both sides, so neither has to re-serialise and agree.
-        val sealed = sealer?.seal(tags.toString()) ?: return null
+        // The signature covers everything above: merchant identity, amount, reference. It
+        // cannot cover the tag-80 template that carries it, nor the CRC, which changes when
+        // tag 80 is appended. The switch reverses this by removing tag 80 and the CRC by
+        // offset — substring removal on both sides, so neither has to re-serialise and agree.
+        val signature = sealer?.seal(tags.toString()) ?: return null
 
-        tags.append(tlv(MAC_TEMPLATE, buildString {
-            append(tlv("00", SCHEME_GUID))
-            append(tlv("01", sealed))
-        }))
+        val seal = tlv("00", SCHEME_GUID) + tlv("01", signature)
+
+        // A seal that overruns EMVCo's two-digit length is not one the switch can read, and
+        // tlv() would throw on it mid-sale. Refused here, like any other code that cannot be
+        // sealed, rather than crashing the QR screen.
+        if (seal.length > TLV_MAX) return null
+
+        tags.append(tlv(SEAL_TEMPLATE, seal))
 
         val body = tags.toString() + CRC_TAG + "04"
         return body + crc16(body)
@@ -134,7 +141,7 @@ object EmvcoQrGenerator {
      * common misreading of the format, and why a 12-character value is prefixed "12", not "0C".
      */
     private fun tlv(tag: String, value: String): String {
-        require(value.length <= 99) { "Tag '$tag' is ${value.length} characters; EMVCo caps at 99." }
+        require(value.length <= TLV_MAX) { "Tag '$tag' is ${value.length} characters; EMVCo caps at $TLV_MAX." }
         return "%s%02d%s".format(tag, value.length, value)
     }
 

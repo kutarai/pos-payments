@@ -1,11 +1,14 @@
 package zw.co.unipay.payments
 
 import zw.co.unipay.payments.qr.EmvcoQrGenerator
-import zw.co.unipay.payments.qr.QrMacSealer
+import zw.co.unipay.payments.qr.QrSealer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+
+/** Base64url and mixed case, as a real signature is — the case has to survive. */
+private const val SIGNATURE = "aB-_0123cD"
 
 /**
  * The payload a till puts on screen. What it names the merchant, and that it cannot be
@@ -13,15 +16,17 @@ import org.junit.Test
  */
 class EmvcoQrGeneratorTest {
 
-    private object AlwaysSeals : QrMacSealer {
-        override fun seal(payload: String) = "0123456789ABCDEF"
+    private open class FixedSealer(private val signature: String?) : QrSealer {
+        override fun seal(payload: String) = signature
+        override fun publicKeyDer(): ByteArray? = null
+        override fun securityLevel() = "software"
     }
 
-    private object CannotSeal : QrMacSealer {
-        override fun seal(payload: String): String? = null
-    }
+    private object AlwaysSeals : FixedSealer(SIGNATURE)
 
-    private fun payload(sealer: QrMacSealer? = AlwaysSeals, amount: Double? = 12.50) =
+    private object CannotSeal : FixedSealer(null)
+
+    private fun payload(sealer: QrSealer? = AlwaysSeals, amount: Double? = 12.50) =
         EmvcoQrGenerator.generatePayload(
             qrMerchantId = "600123456789",
             qrOutletNumber = 4,
@@ -63,11 +68,24 @@ class EmvcoQrGeneratorTest {
         val template = tag(payload()!!, "80")!!
 
         assertEquals("ZWQR", subTag(template, "00"))
-        assertEquals("0123456789ABCDEF", subTag(template, "01"))
+        assertEquals(SIGNATURE, subTag(template, "01"))
     }
 
     /**
-     * A code the switch will refuse is not worth a customer's time. Without a MAC the switch
+     * The seal template has 99 characters, and the GUID and sub-tag headers spend 12. A P-256
+     * signature in P1363 form is 86 characters of base64url and fits; anything that does not is
+     * refused like any other code that cannot be sealed, rather than thrown mid-sale.
+     */
+    @Test
+    fun `a p256 signature fits and anything longer is refused`() {
+        val p256 = "A".repeat(86)
+        assertEquals(p256, subTag(tag(payload(FixedSealer(p256))!!, "80")!!, "01"))
+
+        assertNull(payload(FixedSealer("A".repeat(88))))
+    }
+
+    /**
+     * A code the switch will refuse is not worth a customer's time. Without a seal the switch
      * cannot tell this till from a printer, so nothing goes on screen at all.
      */
     @Test
@@ -77,16 +95,16 @@ class EmvcoQrGeneratorTest {
     }
 
     /**
-     * The MAC covers the identity, the amount and the reference — everything the customer is
+     * The signature covers the identity, the amount and the reference — everything the customer is
      * agreeing to — and cannot cover the template carrying it or the CRC that follows.
      */
     @Test
     fun `the sealed bytes are everything before tag 80`() {
         var sealed: String? = null
-        val capturing = object : QrMacSealer {
+        val capturing = object : FixedSealer(SIGNATURE) {
             override fun seal(payload: String): String? {
                 sealed = payload
-                return "0123456789ABCDEF"
+                return SIGNATURE
             }
         }
 
@@ -101,7 +119,7 @@ class EmvcoQrGeneratorTest {
         assertTrue("covers the merchant", sealed!!.contains("600123456789"))
         assertTrue("covers the amount", sealed!!.contains("12.50"))
         assertTrue("covers the reference", sealed!!.contains("QR123"))
-        assertTrue("cannot cover its own MAC", !sealed!!.contains("0123456789ABCDEF"))
+        assertTrue("cannot cover its own signature", !sealed!!.contains(SIGNATURE))
     }
 
     @Test

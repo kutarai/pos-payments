@@ -15,6 +15,8 @@ import zw.co.unipay.payments.grpc.payment.QrPaymentRequest
 import zw.co.unipay.payments.grpc.payment.QrPaymentUpdate
 import zw.co.unipay.payments.grpc.terminal.HeartbeatRequest
 import zw.co.unipay.payments.grpc.terminal.HeartbeatResponse
+import zw.co.unipay.payments.grpc.terminal.RegisterQrSigningKeyRequest
+import zw.co.unipay.payments.grpc.terminal.RegisterQrSigningKeyResponse
 import zw.co.unipay.payments.grpc.terminal.TerminalManagementServiceGrpc
 import zw.co.unipay.payments.grpc.terminal.TerminalRegistrationRequest
 import zw.co.unipay.payments.grpc.terminal.TerminalRegistrationResponse
@@ -144,6 +146,13 @@ class SwitchClient(private val endpointProvider: () -> Endpoint?) {
         return terminalStub()
             .withDeadlineAfter(MANAGEMENT_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .heartbeat(request)
+    }
+
+    fun registerQrSigningKey(request: RegisterQrSigningKeyRequest): RegisterQrSigningKeyResponse {
+        Log.d(TAG, "Registering QR signing key: ${request.deviceId}")
+        return terminalStub()
+            .withDeadlineAfter(MANAGEMENT_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .registerQrSigningKey(request)
     }
 
     fun shutdown() {

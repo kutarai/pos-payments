@@ -21,7 +21,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import zw.co.unipay.payments.model.Money
 import zw.co.unipay.payments.qr.EmvcoQrGenerator
-import zw.co.unipay.payments.qr.QrMacSealers
+import zw.co.unipay.payments.qr.QrSealers
+import zw.co.unipay.payments.qr.QrSigningKeyRegistration
 import zw.co.unipay.payments.card.TerminalConfig
 import zw.co.unipay.payments.grpc.payment.QrPaymentStatus
 import zw.co.unipay.payments.switching.SwitchClient
@@ -29,9 +30,11 @@ import zw.co.unipay.payments.switching.SwitchRequests
 import zw.co.unipay.payments.terminal.TerminalSnapshot
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.Serializable
 import java.util.UUID
 
@@ -149,7 +152,7 @@ fun QrPaymentDialog(
         authorizationCode = null
         // Cleared here, and no longer by the retry button, which set it on the line after this
         // function had already run: a retry that failed again inside newSale — an unenrolled
-        // merchant, a PED that would not seal — had its real reason overwritten by the default
+        // merchant, a till that could not seal — had its real reason overwritten by the default
         // a moment later, and the operator was told the payment had simply not arrived.
         failureMessage = timedOutMessage
         val reference = "${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
@@ -175,12 +178,13 @@ fun QrPaymentDialog(
             amount = amount.amount,
             paymentReference = reference,
             billNumber = receiptNumber,
-            sealer = QrMacSealers.get(),
+            sealer = QrSealers.get(),
         )
 
         if (payload == null) {
-            // The PED could not seal it: no MAC key injected, or the hardware refused. The
-            // switch would refuse the code, so it is not put on screen for a customer to scan.
+            // The terminal could not sign it: no key and none could be made, or the keystore
+            // refused. The switch would refuse the code, so it is not put on screen for a
+            // customer to scan.
             Log.e(TAG, "Could not seal the QR payload; refusing to present an unsealed code")
             failureMessage = "This terminal cannot secure a QR code — call support"
             flowState = QrFlowState.FAILED
@@ -211,13 +215,26 @@ fun QrPaymentDialog(
                     paymentReference = currentRef,
                     currency = amount.currency,
                     amountMinor = (amount.amount * 100).toLong(),
-                    // What is on the screen, sealed. The switch verifies the tag-80 MAC
+                    // What is on the screen, sealed. The switch verifies the tag-80 signature
                     // against this terminal's key before it opens a hold.
                     qrPayload = qrPayload,
                     billNumber = receiptNumber,
                     latitude = latitude,
                     longitude = longitude,
                 )
+
+                // The switch checks the seal against the key this till registered, so the key
+                // goes first. A refusal ends the sale here with a reason someone can act on;
+                // without this the same fault arrived as "This QR code is not valid".
+                val registration = withContext(Dispatchers.IO) {
+                    QrSigningKeyRegistration.ensure(
+                        switchClient, identity.deviceId.orEmpty(), QrSealers.get())
+                }
+                if (registration is QrSigningKeyRegistration.Outcome.Refused) {
+                    failureMessage = "This terminal's QR key was not accepted — call support"
+                    flowState = QrFlowState.FAILED
+                    return@launch
+                }
 
                 Log.d(TAG, "Opening gRPC stream: ref=$currentRef")
                 val flow = switchClient.waitForQrPayment(request)

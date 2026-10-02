@@ -21,6 +21,12 @@ service TerminalManagementService {
   // Called by the setup app after PedWriteDukptIpek succeeds so the switch
   // can cross-check incoming auth-message KSNs against the registered one.
   rpc RegisterDukptKsn(RegisterDukptKsnRequest) returns (RegisterDukptKsnResponse);
+
+  // Record the public half of the key the till signs QR codes with. Called by the till
+  // itself, not the agent: Keystore keys belong to the app that made them, and the till is
+  // the app that seals. A call of its own rather than a heartbeat field, because the till
+  // reports no telemetry and a heartbeat from it would overwrite the agent's with zeros.
+  rpc RegisterQrSigningKey(RegisterQrSigningKeyRequest) returns (RegisterQrSigningKeyResponse);
 }
 
 message TerminalIdentifier {
@@ -120,6 +126,17 @@ message RegisterDukptKsnRequest {
 }
 
 message RegisterDukptKsnResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message RegisterQrSigningKeyRequest {
+  string device_id = 1;
+  bytes public_key = 2;       // X.509 SubjectPublicKeyInfo DER; ECDSA P-256
+  string security_level = 3;  // "strongbox", "tee" or "software", as the key reports it
+}
+
+message RegisterQrSigningKeyResponse {
   bool success = 1;
   string message = 2;
 }
