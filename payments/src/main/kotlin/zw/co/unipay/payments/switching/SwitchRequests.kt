@@ -1,6 +1,9 @@
 package zw.co.unipay.payments.switching
 
 import zw.co.unipay.payments.grpc.payment.CryptoPaymentRequest
+import zw.co.unipay.payments.card.CardTransactionType
+import zw.co.unipay.payments.grpc.payment.MobileMoneyBankingRequest
+import zw.co.unipay.payments.grpc.payment.MobileMoneyOperation
 import zw.co.unipay.payments.grpc.payment.MobileMoneyPaymentRequest
 import zw.co.unipay.payments.grpc.payment.QrPaymentRequest
 import zw.co.unipay.payments.terminal.TerminalSnapshot
@@ -90,4 +93,42 @@ object SwitchRequests {
         .setLatitude(latitude)
         .setLongitude(longitude)
         .build()
+
+    /**
+     * A cash out, cash in or balance enquiry on a mobile wallet. The operation is named
+     * explicitly — the switch refuses a request without one rather than guess which way the
+     * money moves — and a balance enquiry goes with no amount.
+     */
+    fun mobileMoneyBanking(
+        identity: TerminalSnapshot,
+        transactionType: CardTransactionType,
+        paymentReference: String,
+        currency: String,
+        amountMinor: Long,
+        mobileNumber: String,
+        latitude: Double,
+        longitude: Double,
+    ): MobileMoneyBankingRequest = MobileMoneyBankingRequest.newBuilder()
+        .setOperation(mobileOperation(transactionType))
+        .setDeviceId(identity.deviceId.orEmpty())
+        .setTerminalId(identity.terminalId.orEmpty())
+        .setSerialNumber(identity.serialNumber)
+        .setMerchantId(identity.merchantId.orEmpty())
+        .setPaymentReference(paymentReference)
+        .setCurrency(currency)
+        .setAmount(if (transactionType.movesMoney) amountMinor else 0L)
+        .setMobileNumber(mobileNumber)
+        .setLatitude(latitude)
+        .setLongitude(longitude)
+        .build()
+
+    /** The wallet operation for a banking type. A purchase is a payment and has none. */
+    internal fun mobileOperation(transactionType: CardTransactionType): MobileMoneyOperation =
+        when (transactionType) {
+            CardTransactionType.CASH_WITHDRAWAL -> MobileMoneyOperation.MOBILE_CASH_OUT
+            CardTransactionType.CASH_DEPOSIT -> MobileMoneyOperation.MOBILE_CASH_IN
+            CardTransactionType.BALANCE_ENQUIRY -> MobileMoneyOperation.MOBILE_BALANCE_ENQUIRY
+            CardTransactionType.PURCHASE -> throw IllegalArgumentException(
+                "A purchase by mobile money is a payment: use mobileMoney(), not mobileMoneyBanking()")
+        }
 }

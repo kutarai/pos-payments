@@ -611,7 +611,7 @@ internal fun formatMinor(currency: String, minor: Long): String {
  * cash, and what the account holds when the bank said.
  */
 @Composable
-private fun BankingApprovalDetails(
+internal fun BankingApprovalDetails(
     transactionType: CardTransactionType,
     amount: String,
     balance: AccountBalance?,

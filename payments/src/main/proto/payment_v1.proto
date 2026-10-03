@@ -21,6 +21,14 @@ service PaymentService {
   // and streams status updates back to the terminal.
   rpc InitiateMobileMoneyPayment(MobileMoneyPaymentRequest) returns (stream MobileMoneyPaymentUpdate);
 
+  // Agent banking on a customer's mobile wallet: cash out (a withdrawal — the wallet is debited
+  // and the agent hands over cash), cash in (a deposit — the agent takes cash and the wallet is
+  // credited) and a balance enquiry. Streams PENDING while the customer confirms on their phone,
+  // then the outcome. Its own call rather than a field on the payment request: a switch that
+  // predates it answers UNIMPLEMENTED, where a field it did not know would have been ignored and
+  // a cash-in taken as a payment out of the depositor's wallet.
+  rpc InitiateMobileMoneyBanking(MobileMoneyBankingRequest) returns (stream MobileMoneyPaymentUpdate);
+
   // Take payment in crypto. The till has no wallet and no way to read a chain, so
   // the switch issues the receiving address and watches it, exactly as it mints
   // the QR payload rather than letting the terminal compose one.
@@ -99,6 +107,33 @@ message MobileMoneyPaymentUpdate {
   string provider_reference = 3;  // Mobile money provider's reference
   string message = 4;             // Human-readable status message
   string timestamp = 5;           // ISO 8601
+  // The wallet's balance, when the provider returned one: always on a confirmed balance enquiry,
+  // sometimes after a cash out or cash in. balance_currency is empty when none came back.
+  int64 available_balance = 6;    // minor units
+  string balance_currency = 7;    // ISO 4217 alpha-3
+  int64 ledger_balance = 8;       // minor units; 0 when the provider returned none
+}
+
+enum MobileMoneyOperation {
+  MOBILE_OPERATION_UNSPECIFIED = 0;  // refused — the switch never guesses which way money moves
+  MOBILE_CASH_OUT = 1;               // withdrawal: debit the wallet, agent pays out cash
+  MOBILE_CASH_IN = 2;                // deposit: agent takes cash, credit the wallet
+  MOBILE_BALANCE_ENQUIRY = 3;        // no money moves
+}
+
+message MobileMoneyBankingRequest {
+  MobileMoneyOperation operation = 1;
+  // Ours, and permanent. The switch resolves the bank's terminal number from it.
+  string device_id = 2;
+  string merchant_id = 3;
+  string payment_reference = 4;   // unique per request
+  string currency = 5;            // ISO 4217 alpha-3
+  int64 amount = 6;               // minor units; must be positive except for a balance enquiry
+  string mobile_number = 7;       // the customer's wallet number
+  double latitude = 8;
+  double longitude = 9;
+  string terminal_id = 10;        // as the device believes it; recorded for cross-check
+  string serial_number = 11;
 }
 
 enum MobileMoneyPaymentStatus {

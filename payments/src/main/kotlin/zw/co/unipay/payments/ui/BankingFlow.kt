@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +29,7 @@ import androidx.compose.ui.window.DialogProperties
 import zw.co.unipay.payments.card.AccountBalance
 import zw.co.unipay.payments.card.CardPaymentDriver
 import zw.co.unipay.payments.card.CardTransactionType
+import zw.co.unipay.payments.switching.SwitchClient
 import java.math.BigDecimal
 
 /**
@@ -38,10 +40,9 @@ import java.math.BigDecimal
  * choice of how. Then Card or Mobile, and for a card the customer inserts or swipes it and enters
  * their PIN, and the switch takes it on to their bank.
  *
- * Mobile is shown and not yet offered. The switch's mobile money call is a payment — it debits the
- * customer's wallet and pays the merchant — and has no way to say "withdrawal", "deposit" or
- * "balance". A deposit sent that way would take money out of the account of the person handing
- * cash over. It is enabled when the switch has a call that means the right thing.
+ * Mobile sends the customer's wallet number to the switch's mobile money banking call — never its
+ * payment call, which would debit the wallet of someone depositing cash — and the customer
+ * confirms on their phone.
  *
  * @param transactionType one of the banking types; a purchase belongs to [PaymentFlow].
  * @param currency the till's working currency, ISO 4217 alpha-3.
@@ -69,6 +70,13 @@ fun BankingFlow(
     }
     var amountMinor by remember { mutableLongStateOf(0L) }
 
+    // As in PaymentFlow: where the switch is may change under a running terminal, so it is read
+    // per call; shutdownNow because onDispose runs on the main thread.
+    val switchClient = remember { SwitchClient { config.identity.endpoint } }
+    DisposableEffect(switchClient) {
+        onDispose { switchClient.shutdownNow() }
+    }
+
     fun finish(outcome: BankingOutcome) {
         onResult(outcome)
         onDismiss()
@@ -80,8 +88,9 @@ fun BankingFlow(
             BankingStep.Method ->
                 if (transactionType.movesMoney) step = BankingStep.Amount
                 else finish(BankingOutcome.Cancelled)
-            // The card screen has its own Cancel and must not be abandoned mid-card.
-            BankingStep.Card -> Unit
+            // The card and mobile screens have their own ways out and must not be abandoned
+            // mid-transaction.
+            BankingStep.Card, BankingStep.Mobile -> Unit
         }
     }
 
@@ -104,6 +113,7 @@ fun BankingFlow(
             cardReaderMissing = !cardPaymentEnabled,
             electronicPaymentsEnabled = electronicPaymentsEnabled,
             onCard = { if (cardPaymentEnabled && electronicPaymentsEnabled) step = BankingStep.Card },
+            onMobile = { if (electronicPaymentsEnabled) step = BankingStep.Mobile },
             // Back to the amount for a withdrawal or deposit, so a wrong figure can be put right
             // without starting again; a balance enquiry has nowhere further back to go.
             onBack = {
@@ -138,6 +148,7 @@ fun BankingFlow(
                                 authorizationCode = result.authorizationCode.ifEmpty { null },
                                 cardLastFour = result.cardLastFour,
                                 balance = result.balance,
+                                method = BankingMethod.CARD,
                             )
                         )
                         is CardPaymentResult.Error -> finish(BankingOutcome.Failed(result.errorMessage))
@@ -149,8 +160,49 @@ fun BankingFlow(
                 },
             )
         }
+
+        BankingStep.Mobile -> MobileBankingDialog(
+            transactionType = transactionType,
+            amountMinor = amountMinor,
+            currency = currency,
+            identity = config.identity,
+            switchClient = switchClient,
+            latitude = config.latitude,
+            longitude = config.longitude,
+            onResult = { result ->
+                when (result) {
+                    is MobileBankingResult.Success -> finish(
+                        BankingOutcome.Approved(
+                            transactionType = transactionType,
+                            amountMinor = if (transactionType.movesMoney) amountMinor else 0L,
+                            currency = currency,
+                            authorizationCode = result.authorizationCode,
+                            cardLastFour = null,
+                            balance = result.balance,
+                            method = BankingMethod.MOBILE,
+                            mobileNumber = result.mobileNumber,
+                            reference = result.paymentReference,
+                        )
+                    )
+                    is MobileBankingResult.Unresolved -> finish(
+                        BankingOutcome.Unresolved(
+                            transactionType = transactionType,
+                            amountMinor = amountMinor,
+                            currency = currency,
+                            method = BankingMethod.MOBILE,
+                            reference = result.paymentReference,
+                            message = result.message,
+                        )
+                    )
+                    // Back to Card or Mobile: a customer whose wallet declined may have a card.
+                    MobileBankingResult.Cancelled -> step = BankingStep.Method
+                }
+            },
+        )
     }
 }
+
+enum class BankingMethod { CARD, MOBILE }
 
 /** How a withdrawal, deposit or balance enquiry ended. */
 sealed class BankingOutcome {
@@ -167,6 +219,26 @@ sealed class BankingOutcome {
         val authorizationCode: String?,
         val cardLastFour: String?,
         val balance: AccountBalance?,
+        val method: BankingMethod = BankingMethod.CARD,
+        /** The wallet, when [method] is MOBILE. */
+        val mobileNumber: String? = null,
+        /** The till's reference for a mobile transaction, which the provider and the switch both hold. */
+        val reference: String? = null,
+    ) : BankingOutcome()
+
+    /**
+     * Nobody said whether it happened: the provider had the request and did not answer. For a
+     * withdrawal the wallet may have been debited; for a deposit it may have been credited. No
+     * cash should change hands and nothing should be retried until the provider confirms —
+     * [reference] is what to ask about.
+     */
+    data class Unresolved(
+        val transactionType: CardTransactionType,
+        val amountMinor: Long,
+        val currency: String,
+        val method: BankingMethod,
+        val reference: String,
+        val message: String,
     ) : BankingOutcome()
 
     /** The bank said no, or could not be asked. No money moved — no cash changes hands. */
@@ -175,7 +247,7 @@ sealed class BankingOutcome {
     data object Cancelled : BankingOutcome()
 }
 
-private enum class BankingStep { Amount, Method, Card }
+private enum class BankingStep { Amount, Method, Card, Mobile }
 
 /**
  * "1250" from "12.50", "12.5" or "12". Null for anything that is not a positive amount with at
@@ -260,6 +332,7 @@ private fun BankingMethodDialog(
     cardReaderMissing: Boolean,
     electronicPaymentsEnabled: Boolean,
     onCard: () -> Unit,
+    onMobile: () -> Unit,
     onBack: () -> Unit,
 ) {
     PaymentScreenSurface(onDismissRequest = onBack) {
@@ -308,12 +381,7 @@ private fun BankingMethodDialog(
             )
         }
 
-        FullWidthButton("Mobile", onClick = {}, enabled = false)
-        Text(
-            text = "Mobile ${transactionType.title.lowercase()} is not available yet",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        FullWidthButton("Mobile", onClick = onMobile, enabled = electronicPaymentsEnabled)
 
         PaymentOutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
             Text(if (transactionType.movesMoney) "Back" else "Cancel")

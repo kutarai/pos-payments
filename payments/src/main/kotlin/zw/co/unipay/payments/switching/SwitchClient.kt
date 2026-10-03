@@ -7,6 +7,7 @@ import zw.co.unipay.payments.grpc.payment.AcceptorAuthorisationRequest
 import zw.co.unipay.payments.grpc.payment.AcceptorAuthorisationResponse
 import zw.co.unipay.payments.grpc.payment.PaymentServiceGrpc
 import zw.co.unipay.payments.grpc.payment.PaymentServiceGrpcKt
+import zw.co.unipay.payments.grpc.payment.MobileMoneyBankingRequest
 import zw.co.unipay.payments.grpc.payment.MobileMoneyPaymentRequest
 import zw.co.unipay.payments.grpc.payment.MobileMoneyPaymentUpdate
 import zw.co.unipay.payments.grpc.payment.CryptoPaymentRequest
@@ -121,6 +122,17 @@ class SwitchClient(private val endpointProvider: () -> Endpoint?) {
     fun initiateMobileMoneyPayment(request: MobileMoneyPaymentRequest): Flow<MobileMoneyPaymentUpdate> {
         Log.d(TAG, "Opening mobile money payment stream: ref=${request.paymentReference}, mobile=${request.mobileNumber}")
         return paymentCoroutineStub().initiateMobileMoneyPayment(request)
+    }
+
+    /**
+     * Open a server-streaming call for a cash out, cash in or balance enquiry on a customer's
+     * mobile wallet. PENDING arrives once the switch has recorded it and sent it to the provider;
+     * the outcome follows. Closing the stream before then leaves the provider's answer unknown.
+     */
+    fun initiateMobileMoneyBanking(request: MobileMoneyBankingRequest): Flow<MobileMoneyPaymentUpdate> {
+        Log.d(TAG, "Opening mobile money banking stream: op=${request.operation}, " +
+            "ref=${request.paymentReference}, mobile=${request.mobileNumber}")
+        return paymentCoroutineStub().initiateMobileMoneyBanking(request)
     }
 
     /**

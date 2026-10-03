@@ -9,6 +9,12 @@ import zw.co.unipay.payments.card.AccountBalance
 import zw.co.unipay.payments.card.CardTransactionType
 import zw.co.unipay.payments.card.TerminalConfig
 import zw.co.unipay.payments.grpc.payment.AcceptorAuthorisationResponse
+import zw.co.unipay.payments.grpc.payment.MobileMoneyOperation
+import zw.co.unipay.payments.grpc.payment.MobileMoneyPaymentUpdate
+import zw.co.unipay.payments.switching.SwitchRequests
+import zw.co.unipay.payments.terminal.Endpoint
+import zw.co.unipay.payments.terminal.TerminalSnapshot
+import zw.co.unipay.payments.ui.mobileBalanceOf
 import zw.co.unipay.payments.switching.SwitchClient
 import zw.co.unipay.payments.switching.SwitchIntegration
 import zw.co.unipay.payments.ui.CardTransactionRequest
@@ -133,5 +139,75 @@ class BankingTransactionsTest {
     @Test
     fun `a balance enquiry needs none`() {
         assertEquals(0L, CardTransactionRequest.balanceEnquiry("USD").amountMinor)
+    }
+
+    // ----- mobile wallet ---------------------------------------------------------------------
+
+    private val agent = TerminalSnapshot(
+        deviceId = "DEV-0001",
+        terminalId = "TERM-42",
+        merchantId = "MERCH-7",
+        merchantName = "Agent 7",
+        taxIdentificationNumber = "1234567890",
+        qrMerchantId = null,
+        qrOutletNumber = 0,
+        endpoint = Endpoint("switch.unipay.co.zw", 3333),
+        serialNumber = "SN-123",
+    )
+
+    private fun mobile(type: CardTransactionType, amount: Long = 2_000L) = SwitchRequests.mobileMoneyBanking(
+        identity = agent,
+        transactionType = type,
+        paymentReference = "MOB_1",
+        currency = "USD",
+        amountMinor = amount,
+        mobileNumber = "0771234567",
+        latitude = 0.0,
+        longitude = 0.0,
+    )
+
+    /** The switch refuses a request with no operation; each type must name its own. */
+    @Test
+    fun `each banking type names its wallet operation`() {
+        assertEquals(MobileMoneyOperation.MOBILE_CASH_OUT, mobile(CardTransactionType.CASH_WITHDRAWAL).operation)
+        assertEquals(MobileMoneyOperation.MOBILE_CASH_IN, mobile(CardTransactionType.CASH_DEPOSIT).operation)
+        assertEquals(MobileMoneyOperation.MOBILE_BALANCE_ENQUIRY, mobile(CardTransactionType.BALANCE_ENQUIRY).operation)
+    }
+
+    @Test
+    fun `a mobile request carries the agent's identity and the wallet`() {
+        val request = mobile(CardTransactionType.CASH_WITHDRAWAL)
+        assertEquals("DEV-0001", request.deviceId)
+        assertEquals("TERM-42", request.terminalId)
+        assertEquals("MERCH-7", request.merchantId)
+        assertEquals("0771234567", request.mobileNumber)
+        assertEquals(2_000L, request.amount)
+    }
+
+    @Test
+    fun `a mobile balance enquiry is sent with no amount`() {
+        assertEquals(0L, mobile(CardTransactionType.BALANCE_ENQUIRY, amount = 9_999L).amount)
+    }
+
+    /** A purchase by mobile money is a payment, on the payment call — never this one. */
+    @Test(expected = IllegalArgumentException::class)
+    fun `a purchase cannot be sent as mobile banking`() {
+        mobile(CardTransactionType.PURCHASE)
+    }
+
+    @Test
+    fun `a mobile balance is read by its currency`() {
+        assertNull(mobileBalanceOf(MobileMoneyPaymentUpdate.getDefaultInstance()))
+        assertEquals(
+            AccountBalance(available = 0L, ledger = null, currency = "USD"),
+            mobileBalanceOf(MobileMoneyPaymentUpdate.newBuilder().setBalanceCurrency("USD").build()),
+        )
+        assertEquals(
+            AccountBalance(available = 500L, ledger = 700L, currency = "ZWG"),
+            mobileBalanceOf(
+                MobileMoneyPaymentUpdate.newBuilder()
+                    .setAvailableBalance(500L).setLedgerBalance(700L).setBalanceCurrency("ZWG").build()
+            ),
+        )
     }
 }
