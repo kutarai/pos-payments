@@ -149,6 +149,10 @@ fun CardPaymentScreen(
     // press of a card-type button owns a number; results arriving under an older one are dropped.
     var attempt by remember { mutableIntStateOf(0) }
 
+    // Whether the last failure sent a reversal. Shown with the timeout, because the one thing the
+    // agent must not do after a withdrawal nobody answered is hand over the cash.
+    var reversalSent by remember { mutableStateOf(false) }
+
     val displayAmount = formatMinor(currency, amount)
     val banking = transactionType.isBanking
 
@@ -159,6 +163,7 @@ fun CardPaymentScreen(
             return
         }
         selectedNetwork = network
+        reversalSent = false
         flowState = FlowState.WAITING_FOR_CARD
         countdown = PaymentWaits.CARD_PRESENTATION_SECONDS
         statusMessage = "Tap or Insert Card"
@@ -182,6 +187,7 @@ fun CardPaymentScreen(
                 }
             }
             if (attempt != thisAttempt) return@launch
+            reversalSent = (result as? CardPaymentResult.Error)?.reversalSent == true
             handlePaymentResult(
                 result,
                 autoComplete = !banking,
@@ -435,6 +441,16 @@ fun CardPaymentScreen(
                                 else -> "Bank did not respond in time"
                             }
                         )
+                        if (reversalSent) {
+                            Text(
+                                "The ${transactionType.title.lowercase()} is being reversed. " +
+                                    "Do not hand out cash.",
+                                textAlign = TextAlign.Center,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
@@ -679,7 +695,11 @@ sealed class CardPaymentResult : Serializable {
         val amount: Long = 0L,
     ) : CardPaymentResult()
 
-    data class Error(val errorMessage: String) : CardPaymentResult()
+    data class Error(
+        val errorMessage: String,
+        /** The bank never answered and the terminal has sent a reversal of the transaction. */
+        val reversalSent: Boolean = false,
+    ) : CardPaymentResult()
     object Cancelled : CardPaymentResult()
     object SwitchToCash : CardPaymentResult()
 }

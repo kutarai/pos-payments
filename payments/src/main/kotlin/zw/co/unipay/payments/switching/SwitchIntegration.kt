@@ -6,6 +6,7 @@ import zw.co.unipay.payments.card.AccountBalance
 import zw.co.unipay.payments.card.CardTransactionType
 import zw.co.unipay.payments.card.TerminalConfig
 import zw.co.unipay.payments.grpc.payment.*
+import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import java.time.Instant
 import java.util.UUID
@@ -16,10 +17,39 @@ import java.util.UUID
  * Called from [onOnlineProc] on the EMV kernel's binder thread.
  * All calls are synchronous/blocking.
  */
-class SwitchIntegration(private val switchClient: SwitchClient) {
+class SwitchIntegration(
+    private val switchClient: SwitchClient,
+    private val reversals: TerminalReversals = TerminalReversals(switchClient),
+) {
 
     companion object {
         private const val TAG = "SwitchIntegration"
+
+        /**
+         * Transactions that are reversed when their authorisation goes unanswered. A withdrawal
+         * the bank approved without the terminal hearing it is an account debited for cash that
+         * was never handed over.
+         */
+        internal val REVERSED_ON_NO_ANSWER = setOf(CardTransactionType.CASH_WITHDRAWAL)
+
+        /**
+         * Failures after which nobody knows whether the switch acted. A refusal — an argument it
+         * rejected, a call it does not have — is a definite no and needs nothing undone; these
+         * may have reached the bank. Reversing one that did not is harmless: the bank declines a
+         * reversal of nothing.
+         */
+        internal val UNKNOWN_OUTCOME = setOf(
+            Status.Code.DEADLINE_EXCEEDED,
+            Status.Code.UNAVAILABLE,
+            Status.Code.UNKNOWN,
+            Status.Code.INTERNAL,
+            Status.Code.CANCELLED,
+            Status.Code.ABORTED,
+            Status.Code.DATA_LOSS,
+        )
+
+        internal fun shouldReverse(transactionType: CardTransactionType, code: Status.Code): Boolean =
+            transactionType in REVERSED_ON_NO_ANSWER && code in UNKNOWN_OUTCOME
     }
 
     /**
@@ -39,6 +69,8 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
         val bankApproved: Boolean = false,
         /** What the bank says the account holds, when it said. */
         val balance: AccountBalance? = null,
+        /** The authorisation got no answer and a reversal of it is on its way to the switch. */
+        val reversalSent: Boolean = false,
     )
 
     /**
@@ -55,8 +87,10 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
         amount: Long,
         transactionType: CardTransactionType = CardTransactionType.PURCHASE,
     ): OnlineProcResult {
+        // Outside the try, so a failure can still say which exchange it was reversing.
+        var request: AcceptorAuthorisationRequest? = null
         return try {
-            val request = buildAuthorisationRequest(
+            request = buildAuthorisationRequest(
                 terminalConfig, emvTlvData, pan, encryptedPinBlock, dukptKsn, cardEntryMode, amount,
                 transactionType,
             )
@@ -100,12 +134,23 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
                 // so the device-side error tells us why instead of just "Communication error".
                 else -> "Communication error: ${e.status.code} ${e.status.description?.take(80) ?: ""}"
             }
+
+            val sent = request
+            val reversed = sent != null && shouldReverse(transactionType, e.status.code)
+            if (reversed) {
+                Log.w(TAG, "No answer to ${transactionType.switchCode} " +
+                    "exchangeId=${sent!!.header.exchangeId} (${e.status.code}) — sending a reversal")
+                reversals.send(reversalFor(sent, pan, terminalConfig, "terminal timeout: ${e.status.code}"))
+            }
+
             OnlineProcResult(
                 status = 2,
                 responseTags = arrayOf("8A"),
                 responseValues = arrayOf("3936"), // "96" = system malfunction (ASCII)
                 authorisationCode = null,
-                displayMessage = msg
+                // The words the card screen classifies by come first and are unchanged.
+                displayMessage = if (reversed) "$msg — the withdrawal is being reversed" else msg,
+                reversalSent = reversed,
             )
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected error during authorisation", e)
@@ -118,6 +163,27 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
             )
         }
     }
+
+    /**
+     * The reversal advice for an authorisation that went unanswered. It names the original by
+     * the exchange id the switch recorded it under, and carries the PAN because the switch does
+     * not keep one. Kept free of logging, like the request builder, so tests can call it.
+     */
+    internal fun reversalFor(
+        original: AcceptorAuthorisationRequest,
+        pan: String,
+        config: TerminalConfig,
+        reason: String,
+    ): AcceptorReversalRequest = AcceptorReversalRequest.newBuilder()
+        .setDeviceId(config.deviceId)
+        .setMerchantId(config.merchantId)
+        .setExchangeId(original.header.exchangeId)
+        .setTransactionReference(original.transaction.transactionReference)
+        .setPan(pan)
+        .setAmount(original.transaction.amount)
+        .setCurrency(original.transaction.currency)
+        .setReason(reason)
+        .build()
 
     // ── Build protobuf request from EMV data ──────────────────────────
 

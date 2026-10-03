@@ -12,6 +12,13 @@ service PaymentService {
   // AcceptorAuthorisationRequest (caaa.001) → AcceptorAuthorisationResponse (caaa.002)
   rpc Authorise(AcceptorAuthorisationRequest) returns (AcceptorAuthorisationResponse);
 
+  // Terminal-initiated reversal. Sent when the terminal got no response to its Authorise (a
+  // timeout) and must undo a sale the switch may have completed at the partner. The terminal
+  // supplies the original PAN — the switch does not persist it — and the exchange id that locates
+  // the partner trace (reference + STAN) the reversal is built from. Best-effort: the switch
+  // reverses and acknowledges receipt.
+  rpc Reverse(AcceptorReversalRequest) returns (AcceptorReversalResponse);
+
   // EMVco QR Payment: terminal registers a QR payment and streams status updates.
   // Terminal opens the stream; switch sends PENDING confirmation, then CLAIMED on payment.
   // If terminal closes the stream (timeout), switch marks payment as TIMED_OUT.
@@ -264,6 +271,26 @@ message AcceptorAuthorisationResponse {
   int64 available_balance = 5;      // minor units; 0 when no balance was returned
   string balance_currency = 6;      // ISO 4217 alpha-3 (e.g. "USD")
   int64 ledger_balance = 7;         // minor units (book balance); 0 when the host returned none
+}
+
+// ─── Reversal ────────────────────────────────────────────────────────
+
+message AcceptorReversalRequest {
+  string device_id = 1;              // ours, permanent — the switch resolves the route from it
+  string merchant_id = 2;
+  // The exchange id of the original Authorise, so the switch finds the partner trace (reference +
+  // STAN) it recorded for that sale — that pair is what the partner reverses against.
+  string exchange_id = 3;
+  string transaction_reference = 4;  // the terminal's original reference
+  string pan = 5;                    // the terminal has it; the switch does not persist it
+  int64 amount = 6;                  // minor units, the original amount
+  string currency = 7;               // ISO 4217 alpha-3
+  string reason = 8;                 // e.g. "terminal timeout"
+}
+
+message AcceptorReversalResponse {
+  bool accepted = 1;                 // the switch received the reversal advice and attempted it
+  string message = 2;
 }
 
 message AuthorisationResult {

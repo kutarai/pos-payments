@@ -5,6 +5,8 @@ import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
 import zw.co.unipay.payments.grpc.payment.AcceptorAuthorisationRequest
 import zw.co.unipay.payments.grpc.payment.AcceptorAuthorisationResponse
+import zw.co.unipay.payments.grpc.payment.AcceptorReversalRequest
+import zw.co.unipay.payments.grpc.payment.AcceptorReversalResponse
 import zw.co.unipay.payments.grpc.payment.PaymentServiceGrpc
 import zw.co.unipay.payments.grpc.payment.PaymentServiceGrpcKt
 import zw.co.unipay.payments.grpc.payment.MobileMoneyBankingRequest
@@ -100,6 +102,20 @@ class SwitchClient(private val endpointProvider: () -> Endpoint?) {
         return paymentStub()
             .withDeadlineAfter(AUTHORISE_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .authorise(request)
+    }
+
+    /**
+     * Ask the switch to reverse a card transaction whose authorisation got no answer.
+     *
+     * `accepted` means the switch has durably queued it and will retry the bank until it settles
+     * — not that the bank has reversed it yet. A short deadline: this is retried by the caller,
+     * and is often sent at exactly the moment the line to the switch is struggling.
+     */
+    fun reverse(request: AcceptorReversalRequest): AcceptorReversalResponse {
+        Log.d(TAG, "Sending reversal: exchangeId=${request.exchangeId}, reason=${request.reason}")
+        return paymentStub()
+            .withDeadlineAfter(MANAGEMENT_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .reverse(request)
     }
 
     /**
