@@ -17,7 +17,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import zw.co.unipay.payments.R
+import zw.co.unipay.payments.card.AccountBalance
 import zw.co.unipay.payments.card.CardFlowUpdate
+import zw.co.unipay.payments.card.CardTransactionType
 import zw.co.unipay.payments.card.CardPaymentDriver
 import zw.co.unipay.payments.card.CardPaymentDrivers
 import kotlinx.coroutines.launch
@@ -29,23 +31,43 @@ enum class CardNetwork(val displayName: String) {
     VISA_MASTERCARD("Visa / Mastercard")
 }
 
+/**
+ * The card screen as an Activity, for applications that start it with an Intent.
+ *
+ * A purchase unless [EXTRA_TRANSACTION_TYPE] says otherwise; [CardTransactionContract] is the
+ * typed way to start it for a withdrawal, a deposit or a balance enquiry.
+ */
 class CardPaymentActivity : ComponentActivity() {
+
+    companion object {
+        /** Minor units. Not needed for a balance enquiry. */
+        const val EXTRA_AMOUNT = "amount"
+        const val EXTRA_CURRENCY = "currency"
+        /** A [CardTransactionType] name; a purchase when absent or unrecognised. */
+        const val EXTRA_TRANSACTION_TYPE = "transaction_type"
+        /** The [CardPaymentResult], on RESULT_OK. */
+        const val EXTRA_RESULT = "payment_result"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val amount = intent.getLongExtra("amount", 0L)
-        val currency = intent.getStringExtra("currency") ?: "ZWG"
+        val amount = intent.getLongExtra(EXTRA_AMOUNT, 0L)
+        val currency = intent.getStringExtra(EXTRA_CURRENCY) ?: "ZWG"
+        val transactionType = intent.getStringExtra(EXTRA_TRANSACTION_TYPE)
+            ?.let { name -> CardTransactionType.entries.firstOrNull { it.name == name } }
+            ?: CardTransactionType.PURCHASE
 
         setContent {
             MaterialTheme {
                 CardPaymentScreen(
                     amount = amount,
                     currency = currency,
+                    transactionType = transactionType,
                     onBack = { finish() },
                     onPaymentComplete = { result ->
                         val resultIntent = Intent().apply {
-                            putExtra("payment_result", result)
+                            putExtra(EXTRA_RESULT, result)
                         }
                         setResult(RESULT_OK, resultIntent)
                         finish()
@@ -86,11 +108,19 @@ private enum class FlowState {
     SWITCH_OFFLINE
 }
 
+/**
+ * Takes a card for a payment or, with [transactionType], for banking at the counter.
+ *
+ * A purchase completes on its own two seconds after approval, as it always has. A withdrawal,
+ * deposit or balance enquiry waits on the approval screen for Done: the agent has cash to hand
+ * over or take in, or a balance to read out, and a screen that closes itself takes that away.
+ */
 @Composable
 fun CardPaymentScreen(
     amount: Long,
     currency: String = "ZWG",
     driver: CardPaymentDriver? = null,
+    transactionType: CardTransactionType = CardTransactionType.PURCHASE,
     onBack: () -> Unit,
     onPaymentComplete: (CardPaymentResult) -> Unit
 ) {
@@ -119,7 +149,50 @@ fun CardPaymentScreen(
     // press of a card-type button owns a number; results arriving under an older one are dropped.
     var attempt by remember { mutableIntStateOf(0) }
 
-    val displayAmount = "$currency ${amount / 100}.${String.format("%02d", amount % 100)}"
+    val displayAmount = formatMinor(currency, amount)
+    val banking = transactionType.isBanking
+
+    // Starts the card flow on one network. Both buttons used to carry their own copy of this.
+    fun start(network: CardNetwork) {
+        if (transactionType.movesMoney && amount <= 0) {
+            errorMessage = "Enter an amount greater than zero"
+            return
+        }
+        selectedNetwork = network
+        flowState = FlowState.WAITING_FOR_CARD
+        countdown = PaymentWaits.CARD_PRESENTATION_SECONDS
+        statusMessage = "Tap or Insert Card"
+
+        scope.launch {
+            val thisAttempt = attempt
+            val terminal: CardPaymentDriver = resolveDriver()
+            val result = terminal.processPayment(
+                if (transactionType.movesMoney) amount else 0L, network, currency, transactionType
+            ) { update ->
+                if (attempt != thisAttempt) return@processPayment
+                when (update) {
+                    CardFlowUpdate.CARD_DETECTED ->
+                        flowState = FlowState.READING_CARD
+                    CardFlowUpdate.ENTER_PIN ->
+                        flowState = FlowState.ENTER_PIN_ON_KEYPAD
+                    CardFlowUpdate.PROCESSING ->
+                        flowState = FlowState.PROCESSING
+                    CardFlowUpdate.ONLINE_AUTH ->
+                        flowState = FlowState.ONLINE_AUTH
+                }
+            }
+            if (attempt != thisAttempt) return@launch
+            handlePaymentResult(
+                result,
+                autoComplete = !banking,
+                onFlowState = { flowState = it },
+                onStatusMessage = { statusMessage = it },
+                onErrorMessage = { errorMessage = it },
+                onPaymentResult = { paymentResult = it },
+                onPaymentComplete = onPaymentComplete
+            )
+        }
+    }
 
     // Countdown timer while waiting for card
     LaunchedEffect(flowState, countdown) {
@@ -175,13 +248,13 @@ fun CardPaymentScreen(
         ) {
             // Title
             Text(
-                "Card Payment",
+                transactionType.title,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
 
-            // Amount card
-            Card(
+            // Amount card. A balance enquiry has no amount to show.
+            if (transactionType.movesMoney) Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -203,10 +276,12 @@ fun CardPaymentScreen(
             Text(
                 text = when (flowState) {
                     FlowState.SELECT_NETWORK -> "Select Card Type"
-                    FlowState.WAITING_FOR_CARD -> "Tap or Insert Card"
+                    // No tap for banking: the driver reads chip or stripe only, so a customer
+                    // told to tap would hold their card to a reader that is not listening.
+                    FlowState.WAITING_FOR_CARD -> if (banking) "Insert or Swipe Card" else "Tap or Insert Card"
                     FlowState.READING_CARD -> "Reading Card..."
                     FlowState.ENTER_PIN_ON_KEYPAD -> "Enter PIN on Keypad"
-                    FlowState.PROCESSING -> "Processing Payment..."
+                    FlowState.PROCESSING -> if (banking) "Processing..." else "Processing Payment..."
                     FlowState.ONLINE_AUTH -> "Waiting for bank response..."
                     FlowState.APPROVED -> "Approved"
                     FlowState.DECLINED -> "Declined"
@@ -248,41 +323,7 @@ fun CardPaymentScreen(
 
                         // Zimswitch button
                         Button(
-                            onClick = {
-                                selectedNetwork = CardNetwork.ZIMSWITCH
-                                flowState = FlowState.WAITING_FOR_CARD
-                                countdown = PaymentWaits.CARD_PRESENTATION_SECONDS
-                                statusMessage = "Tap or Insert Card"
-
-                                scope.launch {
-                                    val thisAttempt = attempt
-                                    val terminal: CardPaymentDriver = resolveDriver()
-                                    val result = terminal.processPayment(
-                                        amount, CardNetwork.ZIMSWITCH, currency
-                                    ) { update ->
-                                        if (attempt != thisAttempt) return@processPayment
-                                        when (update) {
-                                            CardFlowUpdate.CARD_DETECTED ->
-                                                flowState = FlowState.READING_CARD
-                                            CardFlowUpdate.ENTER_PIN ->
-                                                flowState = FlowState.ENTER_PIN_ON_KEYPAD
-                                            CardFlowUpdate.PROCESSING ->
-                                                flowState = FlowState.PROCESSING
-                                            CardFlowUpdate.ONLINE_AUTH ->
-                                                flowState = FlowState.ONLINE_AUTH
-                                        }
-                                    }
-                                    if (attempt != thisAttempt) return@launch
-                                    handlePaymentResult(
-                                        result,
-                                        onFlowState = { flowState = it },
-                                        onStatusMessage = { statusMessage = it },
-                                        onErrorMessage = { errorMessage = it },
-                                        onPaymentResult = { paymentResult = it },
-                                        onPaymentComplete = onPaymentComplete
-                                    )
-                                }
-                            },
+                            onClick = { start(CardNetwork.ZIMSWITCH) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(56.dp),
@@ -300,41 +341,7 @@ fun CardPaymentScreen(
 
                         // Visa / Mastercard button
                         Button(
-                            onClick = {
-                                selectedNetwork = CardNetwork.VISA_MASTERCARD
-                                flowState = FlowState.WAITING_FOR_CARD
-                                countdown = PaymentWaits.CARD_PRESENTATION_SECONDS
-                                statusMessage = "Tap or Insert Card"
-
-                                scope.launch {
-                                    val thisAttempt = attempt
-                                    val terminal: CardPaymentDriver = resolveDriver()
-                                    val result = terminal.processPayment(
-                                        amount, CardNetwork.VISA_MASTERCARD, currency
-                                    ) { update ->
-                                        if (attempt != thisAttempt) return@processPayment
-                                        when (update) {
-                                            CardFlowUpdate.CARD_DETECTED ->
-                                                flowState = FlowState.READING_CARD
-                                            CardFlowUpdate.ENTER_PIN ->
-                                                flowState = FlowState.ENTER_PIN_ON_KEYPAD
-                                            CardFlowUpdate.PROCESSING ->
-                                                flowState = FlowState.PROCESSING
-                                            CardFlowUpdate.ONLINE_AUTH ->
-                                                flowState = FlowState.ONLINE_AUTH
-                                        }
-                                    }
-                                    if (attempt != thisAttempt) return@launch
-                                    handlePaymentResult(
-                                        result,
-                                        onFlowState = { flowState = it },
-                                        onStatusMessage = { statusMessage = it },
-                                        onErrorMessage = { errorMessage = it },
-                                        onPaymentResult = { paymentResult = it },
-                                        onPaymentComplete = onPaymentComplete
-                                    )
-                                }
-                            },
+                            onClick = { start(CardNetwork.VISA_MASTERCARD) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(56.dp),
@@ -372,13 +379,34 @@ fun CardPaymentScreen(
                     }
 
                     FlowState.APPROVED -> {
-                        Spacer(modifier = Modifier.height(48.dp))
+                        Spacer(modifier = Modifier.height(if (banking) 16.dp else 48.dp))
                         Text(
                             "APPROVED",
                             fontSize = 32.sp,
                             fontWeight = FontWeight.Bold,
                             color = PaymentColors.success
                         )
+                        if (banking) {
+                            val approved = paymentResult as? CardPaymentResult.Success
+                            BankingApprovalDetails(
+                                transactionType = transactionType,
+                                amount = formatMinor(currency, approved?.amount ?: amount),
+                                balance = approved?.balance,
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            Button(
+                                onClick = { approved?.let(onPaymentComplete) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = PaymentColors.success
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Done", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
 
                     FlowState.ONLINE_AUTH -> {
@@ -403,7 +431,7 @@ fun CardPaymentScreen(
                             when (flowState) {
                                 FlowState.SWITCH_OFFLINE -> "Bank offline — could not connect"
                                 FlowState.TIMEOUT -> "No card presented"
-                                FlowState.DECLINED -> "Payment cancelled"
+                                FlowState.DECLINED -> if (banking) "Cancelled" else "Payment cancelled"
                                 else -> "Bank did not respond in time"
                             }
                         )
@@ -425,12 +453,14 @@ fun CardPaymentScreen(
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(
-                                "Retry Card Payment",
+                                if (banking) "Try Again" else "Retry Card Payment",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Button(
+                        // Cash instead of a card is an answer to a sale, not to a withdrawal,
+                        // a deposit or a balance enquiry — for those it would be nonsense.
+                        if (!banking) Button(
                             onClick = {
                                 onPaymentComplete(CardPaymentResult.SwitchToCash)
                             },
@@ -462,8 +492,10 @@ fun CardPaymentScreen(
                 }
             }
 
-            // Cancel button
-            OutlinedButton(
+            // Cancel button. Not once approved: pressing it then reported Cancelled for a
+            // transaction the bank had just authorised — for a withdrawal, money out of the
+            // customer's account with the till believing nothing happened.
+            if (flowState != FlowState.APPROVED) OutlinedButton(
                 onClick = { cancelHardwareAndClose() },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -480,7 +512,10 @@ fun CardPaymentScreen(
         AlertDialog(
             onDismissRequest = { errorMessage = null },
             title = {
-                Text("Payment Error", color = MaterialTheme.colorScheme.error)
+                Text(
+                    if (banking) "${transactionType.title} Error" else "Payment Error",
+                    color = MaterialTheme.colorScheme.error
+                )
             },
             // The reason the terminal gave — a declined code, a wrong PIN, whatever the kernel
             // said. Red, because it is the only place the operator learns why.
@@ -509,6 +544,7 @@ fun CardPaymentScreen(
 
 private suspend fun handlePaymentResult(
     result: CardPaymentResult,
+    autoComplete: Boolean,
     onFlowState: (FlowState) -> Unit,
     onStatusMessage: (String) -> Unit,
     onErrorMessage: (String?) -> Unit,
@@ -520,8 +556,10 @@ private suspend fun handlePaymentResult(
             onFlowState(FlowState.APPROVED)
             onStatusMessage("Approved")
             onPaymentResult(result)
-            kotlinx.coroutines.delay(2000)
-            onPaymentComplete(result)
+            if (autoComplete) {
+                kotlinx.coroutines.delay(2000)
+                onPaymentComplete(result)
+            }
         }
         is CardPaymentResult.Error -> {
             val msg = result.errorMessage
@@ -561,6 +599,67 @@ private suspend fun handlePaymentResult(
     }
 }
 
+/** "USD 12.50" from 1250. Every currency this estate takes has two minor digits. */
+internal fun formatMinor(currency: String, minor: Long): String {
+    val sign = if (minor < 0) "-" else ""
+    val abs = kotlin.math.abs(minor)
+    return "$sign$currency ${abs / 100}.${String.format("%02d", abs % 100)}"
+}
+
+/**
+ * What the agent and the customer need to read once the bank has said yes: what to do with the
+ * cash, and what the account holds when the bank said.
+ */
+@Composable
+private fun BankingApprovalDetails(
+    transactionType: CardTransactionType,
+    amount: String,
+    balance: AccountBalance?,
+) {
+    val instruction = when (transactionType) {
+        CardTransactionType.CASH_WITHDRAWAL -> "Give the customer $amount"
+        CardTransactionType.CASH_DEPOSIT -> "$amount deposited"
+        else -> null
+    }
+    instruction?.let {
+        Text(it, fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+    }
+
+    when {
+        balance != null -> Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("Available balance", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    formatMinor(balance.currency, balance.available),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                balance.ledger?.let { ledger ->
+                    Text(
+                        "Ledger balance ${formatMinor(balance.currency, ledger)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        // Approved with nothing to show. Said, rather than leaving a blank where the customer
+        // was expecting a number — and it is the bank's omission, not the terminal's.
+        transactionType == CardTransactionType.BALANCE_ENQUIRY -> Text(
+            "The bank did not return a balance",
+            color = MaterialTheme.colorScheme.error,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
 sealed class CardPaymentResult : Serializable {
     data class Success(
         val authorizationCode: String,
@@ -572,7 +671,12 @@ sealed class CardPaymentResult : Serializable {
         val track2EquivalentData: String? = null,   // Track 2 data (tag 57)
         val encryptedPinBlock: String? = null,       // Encrypted PIN block (hex)
         val panSequenceNumber: String? = null,       // PAN Sequence Number (tag 5F34)
-        val cardEntryMode: String? = null            // "ICC", "NFC", or "MCR"
+        val cardEntryMode: String? = null,           // "ICC", "NFC", or "MCR"
+        val transactionType: CardTransactionType = CardTransactionType.PURCHASE,
+        /** What the bank says the account holds — always on a balance enquiry, sometimes after a withdrawal or deposit. */
+        val balance: AccountBalance? = null,
+        /** Minor units actually authorised; zero for a balance enquiry. */
+        val amount: Long = 0L,
     ) : CardPaymentResult()
 
     data class Error(val errorMessage: String) : CardPaymentResult()

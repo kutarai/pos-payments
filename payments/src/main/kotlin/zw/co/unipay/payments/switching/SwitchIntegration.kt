@@ -2,6 +2,8 @@ package zw.co.unipay.payments.switching
 
 import android.util.Log
 import com.google.protobuf.ByteString
+import zw.co.unipay.payments.card.AccountBalance
+import zw.co.unipay.payments.card.CardTransactionType
 import zw.co.unipay.payments.card.TerminalConfig
 import zw.co.unipay.payments.grpc.payment.*
 import io.grpc.StatusRuntimeException
@@ -29,7 +31,14 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
         val responseTags: Array<String>,
         val responseValues: Array<String>,
         val authorisationCode: String?,
-        val displayMessage: String?
+        val displayMessage: String?,
+        /**
+         * The bank said yes. Not the same as having an [authorisationCode]: an approved balance
+         * enquiry comes back with none, and neither does a bank that leaves the field empty.
+         */
+        val bankApproved: Boolean = false,
+        /** What the bank says the account holds, when it said. */
+        val balance: AccountBalance? = null,
     )
 
     /**
@@ -43,15 +52,17 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
         encryptedPinBlock: ByteArray?,
         dukptKsn: ByteArray?,
         cardEntryMode: String?,
-        amount: Long
+        amount: Long,
+        transactionType: CardTransactionType = CardTransactionType.PURCHASE,
     ): OnlineProcResult {
         return try {
             val request = buildAuthorisationRequest(
-                terminalConfig, emvTlvData, pan, encryptedPinBlock, dukptKsn, cardEntryMode, amount
+                terminalConfig, emvTlvData, pan, encryptedPinBlock, dukptKsn, cardEntryMode, amount,
+                transactionType,
             )
 
             Log.d(TAG, "Authorisation request: PAN=${maskPan(pan)}, " +
-                "amount=$amount, entry=$cardEntryMode")
+                "type=${transactionType.switchCode}, amount=$amount, entry=$cardEntryMode")
 
             // What the issuer will recompute the cryptogram from. Logged in full because it is
             // the only artefact that explains a refused cryptogram, and because it carries no
@@ -117,7 +128,8 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
         encryptedPinBlock: ByteArray?,
         dukptKsn: ByteArray?,
         cardEntryMode: String?,
-        amount: Long
+        amount: Long,
+        transactionType: CardTransactionType = CardTransactionType.PURCHASE,
     ): AcceptorAuthorisationRequest {
         val exchangeId = UUID.randomUUID().toString()
         val now = Instant.now().toString()
@@ -229,11 +241,13 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
             }.build()
 
             transaction = Transaction.newBuilder().apply {
-                transactionType = "CRDP"
+                this.transactionType = transactionType.switchCode
                 transactionDateTime = now
                 transactionReference = transactionRef
                 currency = currencyNumeric
-                this.amount = amount
+                // A balance enquiry moves nothing. Zero rather than whatever the caller held, so
+                // a stale amount can never reach the bank looking like a debit.
+                this.amount = if (transactionType.movesMoney) amount else 0L
                 if (iccData.isNotEmpty()) {
                     iccRelatedData = ByteString.copyFrom(iccData)
                 }
@@ -260,7 +274,26 @@ class SwitchIntegration(private val switchClient: SwitchClient) {
             responseTags = arrayOf("8A"),
             responseValues = arrayOf(emvResponseCode),
             authorisationCode = result.authorisationCode.ifEmpty { null },
-            displayMessage = response.displayMessage.ifEmpty { null }
+            displayMessage = response.displayMessage.ifEmpty { null },
+            bankApproved = result.response == ResponseCode.APPR || result.response == ResponseCode.PRMS,
+            balance = balanceOf(response),
+        )
+    }
+
+    /**
+     * The balance in the response, or null when the bank sent none.
+     *
+     * Proto3 cannot tell an absent number from zero, so the currency decides: the switch sets it
+     * whenever the bank returned a balance, and an account genuinely at zero still has one. A
+     * ledger of zero is read as "not sent" — the switch's own convention for that field — since
+     * showing a book balance of nothing is worse than showing none.
+     */
+    internal fun balanceOf(response: AcceptorAuthorisationResponse): AccountBalance? {
+        if (response.balanceCurrency.isBlank()) return null
+        return AccountBalance(
+            available = response.availableBalance,
+            ledger = response.ledgerBalance.takeIf { it != 0L },
+            currency = response.balanceCurrency,
         )
     }
 

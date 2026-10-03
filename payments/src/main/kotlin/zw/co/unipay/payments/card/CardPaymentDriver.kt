@@ -36,16 +36,22 @@ enum class CardFlowUpdate {
 interface CardPaymentDriver {
 
     /**
-     * Runs a card payment to its conclusion.
+     * Runs a card transaction to its conclusion.
      *
-     * @param amount   in minor units, because that is what an acquirer settles in and floating
-     *                 point has no business anywhere near an authorisation.
-     * @param onUpdate progress for the screen, called on whatever thread the kernel uses.
+     * @param amount          in minor units, because that is what an acquirer settles in and
+     *                        floating point has no business anywhere near an authorisation.
+     *                        Ignored for a balance enquiry.
+     * @param transactionType a purchase unless the caller says otherwise. Anything else is
+     *                        banking at the counter, and a driver must treat it as
+     *                        [CardTransactionType.isBanking] says: chip or swipe with a PIN,
+     *                        and approved only by the bank.
+     * @param onUpdate        progress for the screen, called on whatever thread the kernel uses.
      */
     suspend fun processPayment(
         amount: Long,
         cardNetwork: CardNetwork = CardNetwork.VISA_MASTERCARD,
         currency: String = "USD",
+        transactionType: CardTransactionType = CardTransactionType.PURCHASE,
         onUpdate: ((CardFlowUpdate) -> Unit)? = null
     ): CardPaymentResult
 

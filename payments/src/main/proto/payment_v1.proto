@@ -209,7 +209,7 @@ enum CardDataEntryMode {
 // ─── Transaction ────────────────────────────────────────────────────
 
 message Transaction {
-  string transaction_type = 1;      // "CRDP" (Card Payment), "CSHW" (Cash Withdrawal)
+  string transaction_type = 1;      // "CRDP" payment, "CSHW" withdrawal, "CSHD" deposit, "BALC" balance
   string transaction_date_time = 2; // ISO 8601
   string transaction_reference = 3; // Unique transaction reference
   string currency = 4;             // ISO 4217 alpha-3 ("USD", "ZWL")
@@ -224,9 +224,11 @@ message AcceptorAuthorisationResponse {
   string transaction_reference = 2;
   AuthorisationResult result = 3;
   string display_message = 4;       // Message to display on terminal
-  // Balance enquiry (transaction_type "BALC") result, from ISO 8583 field 54.
-  int64 available_balance = 5;      // minor units; 0 when not a balance enquiry
+  // Balance result, from ISO 8583 field 54 (or the bank's balance RPC). Set on a balance enquiry
+  // (transaction_type "BALC"), and on a withdrawal/deposit when the host returns the new balance.
+  int64 available_balance = 5;      // minor units; 0 when no balance was returned
   string balance_currency = 6;      // ISO 4217 alpha-3 (e.g. "USD")
+  int64 ledger_balance = 7;         // minor units (book balance); 0 when the host returned none
 }
 
 message AuthorisationResult {
