@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.grpc.Status
+import io.grpc.StatusException
 import io.grpc.StatusRuntimeException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -167,10 +168,18 @@ internal fun MobileBankingDialog(
                 }
             } catch (_: CancellationException) {
                 Log.d(MOBILE_BANKING_TAG, "stream cancelled: ref=$ref")
-            } catch (e: StatusRuntimeException) {
-                Log.e(MOBILE_BANKING_TAG, "stream failed: ref=$ref, status=${e.status}", e)
+            } catch (e: Exception) {
+                // The coroutine stub fails with the checked StatusException, the blocking one
+                // with StatusRuntimeException; catching only the latter let an older switch's
+                // UNIMPLEMENTED escape and take the whole application down with it.
+                val status = when (e) {
+                    is StatusException -> e.status
+                    is StatusRuntimeException -> e.status
+                    else -> throw e
+                }
+                Log.e(MOBILE_BANKING_TAG, "stream failed: ref=$ref, status=$status", e)
                 if (state != MobileBankingState.WAITING_CONFIRMATION) return@launch
-                when (e.status.code) {
+                when (status.code) {
                     // An older switch: it does not have the call, so it did nothing.
                     Status.Code.UNIMPLEMENTED -> {
                         message = "This switch does not support mobile ${transactionType.title.lowercase()} yet"
