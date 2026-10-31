@@ -43,6 +43,22 @@ class PinEncryptionSchemeTest {
     }
 
     @Test
+    fun `an absent policy yields DUKPT when the caller's default is DUKPT`() {
+        assertEquals(DUKPT, PinEncryptionScheme.fromPolicy(contextWithPolicy(null), default = DUKPT))
+    }
+
+    @Test
+    fun `an unrecognised policy value yields DUKPT when the caller's default is DUKPT`() {
+        assertEquals(DUKPT, PinEncryptionScheme.fromPolicy(contextWithPolicy("RUBBISH"), default = DUKPT))
+    }
+
+    @Test
+    fun `a blank policy value is treated as absent and yields the caller's default`() {
+        assertEquals(DUKPT, PinEncryptionScheme.fromPolicy(contextWithPolicy(""), default = DUKPT))
+        assertEquals(MKSK, PinEncryptionScheme.fromPolicy(contextWithPolicy(""), default = MKSK))
+    }
+
+    @Test
     fun `MKSK MK_SK and MS_TDESKSK all parse as MKSK`() {
         for (value in listOf("MKSK", "MK_SK", "MS_TDESKSK")) {
             assertEquals(value, MKSK, PinEncryptionScheme.fromPolicy(contextWithPolicy(value), default = DUKPT))
