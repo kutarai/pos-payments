@@ -45,10 +45,11 @@ package zw.co.unipay.payments.card
  *          that the vendor means exactly that. Feed threshold, maxTargetPer, targetPer.
  *  - 9F1B  Terminal floor limit, 4 bytes (00004000 = 16384 minor units). EMV standard tag. Feeds
  *          floorLimit.
- *  - 9F7B  The two vendors name it differently. Ciontek feeds it to termOfflineFloorLmt; ZCS's
- *          documentation names the same tag ecTTLVal, an electronic-cash terminal transaction
- *          limit, 6 bytes. The vendors disagree, so what it means is not established. Every
- *          entry holds 6 zero bytes, so nothing depends on it today.
+ *  - 9F7B  The two vendors name it differently. Ciontek feeds it to termOfflineFloorLmt; the ZCS
+ *          documentation names the same tag ecTTLVal, 6 bytes, and gives no expansion of that
+ *          name. The name suggests an electronic-cash terminal limit; that is a reading of the
+ *          name, not something the vendor states. The vendors' names disagree, so what it means
+ *          is not established. Every entry holds 6 zero bytes, so nothing depends on it today.
  *  - DF19, DF20, DF21  Contactless offline floor limit, contactless transaction limit and CVM
  *          limit. From the field names only. Feed termClssOfflineFloorLmt, termClssLmt, cvmLmt.
  *  - 9F01  Acquirer Identifier. EMV standard tag. Feeds AcquierId (sic).
@@ -60,9 +61,11 @@ package zw.co.unipay.payments.card
  *  - 9F3C, 9F3D  Transaction Reference Currency Code and its exponent. EMV standard tags. Feed
  *          referCurrCode, referCurrExp.
  *  - DF8101  Reference currency conversion (0840). From the field name only. Feeds referCurrCon.
- *  - DF8102  Default TDOL, the transaction-certificate data-object list: 9F3704. INFERRED from
- *          the Ciontek field name and this dictionary, not confirmed by a vendor document: the ZCS
- *          doc tags its tDOL field 97, not DF8102. Feeds tDOL.
+ *  - DF8102  Default TDOL, the transaction-certificate data-object list: 9F3704. Evidence: the
+ *          Ciontek vendor demo source (posDemo UpdateDataController.java) labels the same
+ *          "DF8102039F3704" as "Default TDOL", and the Ciontek field it feeds is tDOL. Open
+ *          question: the ZCS documentation tags its own tDOL field 97, and nothing we have
+ *          settles whether ZCS's tag 97 refers to the same object as Ciontek's DF8102. Feeds tDOL.
  *  - DFC108  Feeds clsStatusCheck: a contactless status check switch, from the field name only.
  *  - DFC109  Feeds zeroCheck: a zero-amount check switch, from the field name only.
  *  - DFC10A  Kernel type, the contactless kernel that handles the AID. The values are established
@@ -72,14 +75,19 @@ package zw.co.unipay.payments.card
  *          headings below: 00 default, 01 contact, 02 contactless. Feeds paramType.
  *  - DFC10C  Kernel ID. UNCERTAIN how it differs from DFC10A: it equals DFC10A in every entry
  *          except Discover, where DFC10A is 05 and DFC10C is 06. Feeds kernelID.
- *  - DF18  Not in either table, and listed here because a ZCS adapter must account for it. In the
- *          ZCS EmvApp it is onLinePINFlag (0 = online PIN not supported, 1 = supported), and the
- *          ZCS documentation gives it its own TLV example (DF180101). The shared table carries no
- *          such tag: the ZCS adapter sets it from a constant (1), and Ciontek gets the equivalent
- *          from bypassPin = false in its driver (CiontekEmvPaymentProcessor).
  *  - DFC10D  Extended selection support flag, from the field name only; 01 in the two entries for
  *          the proprietary AID F045535749544348303031 (8b and 14b) and 00 elsewhere, reason
  *          unknown. Feeds extSelectSupFlg.
+ *
+ * A tag the tables do NOT carry (not one of the 29 above), recorded because the ZCS adapter has to
+ * account for it:
+ *  - DF18  In the ZCS EmvApp it is onLinePINFlag (0 = online PIN not supported, 1 = supported).
+ *          The ZCS documentation shows DF180101 once, as one element of its single addApp(byte[])
+ *          example. The shared tables have no such tag, so the ZCS adapter sets the field from a
+ *          constant (1). Where Ciontek's equivalent behaviour comes from is not established:
+ *          CS20's CiontekEmvPaymentProcessor sets bypassPin = false in setTerminalParam, a
+ *          terminal-wide setting, not a per-AID capability; whether it is the counterpart of
+ *          DF18 is a conjecture, nothing here shows it.
  *
  * CAPK entries (every one carries 9F06, 9F22, DF05, DF06, DF07, DF02, DF04 and DF03):
  *  - 9F06  RID of the scheme the key belongs to, 5 bytes. Feeds rid.
