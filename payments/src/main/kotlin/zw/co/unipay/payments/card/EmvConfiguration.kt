@@ -40,8 +40,14 @@ object EmvConfiguration {
     }
 
     // ═════════════════════════════════════════════════════════════
-    //  CAPK Data — 27 entries from posDemo UpdateDataController
+    //  CAPK Data — 26 entries from posDemo UpdateDataController
     // ═════════════════════════════════════════════════════════════
+
+    // NOTE: this comment used to claim 27 entries; the table has always held 26. Moving it from
+    // CS20 did not drop one — the hex was proven identical to the CS20 original. Whether a 27th
+    // CA public key is genuinely missing has to be settled against the acquirer's authoritative
+    // CAPK list, because a missing CA key makes offline data authentication fail for every card
+    // signed under it. Do not add or change any hex here to chase that number.
 
     val CAPK_TLV: List<String> = listOf(
         // CAPK 1: AMEX RID A000000025, index 00
@@ -306,7 +312,7 @@ object EmvConfiguration {
     )
 
     // ═════════════════════════════════════════════════════════════
-    //  AID Data — 17 entries from posDemo UpdateDataController
+    //  AID Data — 20 entries from posDemo UpdateDataController
     //  Includes contactless (paramType=2), contact (paramType=1),
     //  and default (paramType=0) configurations.
     // ═════════════════════════════════════════════════════════════
