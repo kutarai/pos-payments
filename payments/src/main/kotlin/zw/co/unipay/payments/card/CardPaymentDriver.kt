@@ -83,6 +83,11 @@ object CardPaymentDrivers {
 
     fun isRegistered(): Boolean = factory != null
 
+    /** Forgets the registration. For tests only: an application registers once and never undoes it. */
+    fun reset() {
+        factory = null
+    }
+
     /** @throws IllegalStateException if the application never said what terminal it has. */
     fun create(context: Context): CardPaymentDriver =
         factory?.invoke(context) ?: error(

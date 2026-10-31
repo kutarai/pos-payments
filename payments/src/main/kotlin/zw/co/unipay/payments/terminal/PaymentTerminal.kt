@@ -1,5 +1,7 @@
 package zw.co.unipay.payments.terminal
 
+import kotlinx.coroutines.flow.StateFlow
+
 /**
  * What a payment terminal has to be able to do, whoever makes it.
  *
@@ -56,6 +58,14 @@ interface Terminal {
     val pinPad: SecurePinPad?
     val barcodeReader: BarcodeScanner?
     val onboardPrinter: OnboardPrinter?
+
+    /**
+     * Whether the hardware is usable right now, observable so a screen can show it without polling.
+     *
+     * Unlike the peripherals above this is never null: every terminal has a connection state, even
+     * if it is permanently [TerminalConnection.CONNECTED].
+     */
+    val connection: StateFlow<TerminalConnection>
 
     /** Brings the hardware up. Called once, and safe to call again. */
     suspend fun connect(): Boolean

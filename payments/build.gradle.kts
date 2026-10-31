@@ -23,6 +23,10 @@ android {
     }
     buildFeatures { compose = true }
 
+    // android.jar's stubs throw by default; unit tests that touch an Android type (a mocked
+    // Context, say) need them to return defaults instead.
+    testOptions { unitTests.isReturnDefaultValues = true }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -69,6 +73,7 @@ dependencies {
     implementation("com.google.zxing:core:3.3.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:5.11.0")
 }
 
 protobuf {
