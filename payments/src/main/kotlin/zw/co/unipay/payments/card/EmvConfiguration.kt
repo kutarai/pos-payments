@@ -24,12 +24,17 @@ package zw.co.unipay.payments.card
  *  - 9F06  Application Identifier as the terminal holds it. May be a partial: a 5-byte RID alone
  *          matches every product of that scheme. EMV standard tag. Feeds aid.
  *  - DF01  Application selection flag. 00 = partial match (the AID is a prefix; whatever PIX the
- *          card carries still selects), per the vendor tag doc as quoted in the AID 8c comment
- *          below. 01 presumably means exact match, but UNCERTAIN: only AID 14b uses 01, and its
- *          own comment calls 01 "partial match", which contradicts the other reading. Feeds selFlag.
+ *          card carries still selects), 01 = exact match. Established by the ZCS SmartPos
+ *          documentation (doc/EMV_API_en.doc, the EmvApp listing: "selFlag //DF01 (=0 partial
+ *          match, =1 exact match)"), which agrees with the AID 8c comment below. Only AID 14b
+ *          uses 01; its historical comment called 01 "partial match" and was mistaken (now
+ *          corrected). The Ciontek adapter copies the byte unchanged, so it implies no direction
+ *          of its own. Feeds selFlag.
  *  - 9F09  Application version number held by the terminal, 2 bytes: 008C in the Visa/Discover
  *          style entries, 0002 in the Mastercard/AMEX style ones. EMV standard tag. Feeds version.
  *          (9F08, the card's version number, is in neither table and the adapter does not read it.)
+ *          The ZCS vendor doc is inconsistent on this tag: its EmvApp field comment says 9F09
+ *          while its own addApp TLV example uses 9F08. We follow 9F09, which the table uses.
  *  - DF11, DF12, DF13  Terminal Action Code Default, Online and Denial (the EMV TACs), 5 bytes
  *          each. Meaning from the field names and the EMV TAC convention. Feed TACDefault,
  *          TACOnline, TACDenial.
@@ -40,8 +45,10 @@ package zw.co.unipay.payments.card
  *          that the vendor means exactly that. Feed threshold, maxTargetPer, targetPer.
  *  - 9F1B  Terminal floor limit, 4 bytes (00004000 = 16384 minor units). EMV standard tag. Feeds
  *          floorLimit.
- *  - 9F7B  Feeds termOfflineFloorLmt. UNCERTAIN what the vendor means by it: 9F7B is not a tag
- *          this code explains, and every entry holds 6 zero bytes.
+ *  - 9F7B  The two vendors name it differently. Ciontek feeds it to termOfflineFloorLmt; ZCS's
+ *          documentation names the same tag ecTTLVal, an electronic-cash terminal transaction
+ *          limit, 6 bytes. The vendors disagree, so what it means is not established. Every
+ *          entry holds 6 zero bytes, so nothing depends on it today.
  *  - DF19, DF20, DF21  Contactless offline floor limit, contactless transaction limit and CVM
  *          limit. From the field names only. Feed termClssOfflineFloorLmt, termClssLmt, cvmLmt.
  *  - 9F01  Acquirer Identifier. EMV standard tag. Feeds AcquierId (sic).
@@ -53,8 +60,9 @@ package zw.co.unipay.payments.card
  *  - 9F3C, 9F3D  Transaction Reference Currency Code and its exponent. EMV standard tags. Feed
  *          referCurrCode, referCurrExp.
  *  - DF8101  Reference currency conversion (0840). From the field name only. Feeds referCurrCon.
- *  - DF8102  Default TDOL, the transaction-certificate data-object list: 9F3704. From the field
- *          name. Feeds tDOL.
+ *  - DF8102  Default TDOL, the transaction-certificate data-object list: 9F3704. INFERRED from
+ *          the Ciontek field name and this dictionary, not confirmed by a vendor document: the ZCS
+ *          doc tags its tDOL field 97, not DF8102. Feeds tDOL.
  *  - DFC108  Feeds clsStatusCheck: a contactless status check switch, from the field name only.
  *  - DFC109  Feeds zeroCheck: a zero-amount check switch, from the field name only.
  *  - DFC10A  Kernel type, the contactless kernel that handles the AID. The values are established
@@ -64,6 +72,11 @@ package zw.co.unipay.payments.card
  *          headings below: 00 default, 01 contact, 02 contactless. Feeds paramType.
  *  - DFC10C  Kernel ID. UNCERTAIN how it differs from DFC10A: it equals DFC10A in every entry
  *          except Discover, where DFC10A is 05 and DFC10C is 06. Feeds kernelID.
+ *  - DF18  Not in either table, and listed here because a ZCS adapter must account for it. In the
+ *          ZCS EmvApp it is onLinePINFlag (0 = online PIN not supported, 1 = supported), and the
+ *          ZCS documentation gives it its own TLV example (DF180101). The shared table carries no
+ *          such tag: the ZCS adapter sets it from a constant (1), and Ciontek gets the equivalent
+ *          from bypassPin = false in its driver (CiontekEmvPaymentProcessor).
  *  - DFC10D  Extended selection support flag, from the field name only; 01 in the two entries for
  *          the proprietary AID F045535749544348303031 (8b and 14b) and 00 elsewhere, reason
  *          unknown. Feeds extSelectSupFlg.
@@ -535,7 +548,7 @@ object EmvConfiguration {
 
         // AID 14b: Proprietary contact (F045535749544348303031) - Generic EMV kernel
         "9F060BF045535749544348303031" +
-                "DF010101" +                        // selFlag = partial match
+                "DF010101" +                        // selFlag = exact match (01; this comment once said partial)
                 "9F0902008C" +
                 "DF1105DC4000A800" +
                 "DF1205DC4004F800" +
