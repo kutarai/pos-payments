@@ -9,13 +9,92 @@ package zw.co.unipay.payments.card
  * ([tlvOf] is the shared parser), and 650-odd lines of hand-written hex are not worth the risk of
  * re-expressing. A wrong character here declines every card of that scheme at the counter, with
  * nothing on screen to say why — see EmvConfigurationTest.
+ *
+ * ## Tag dictionary
+ *
+ * Several tags below are vendor-private (the DFxx and DFC1xx ones), and nothing else in this
+ * codebase says what they mean. This dictionary was written from how the first adapter (CS20's
+ * EmvAidCapkData.hexStr2Aid and hexStr2Capk) consumes each tag, so "feeds" names the field of
+ * that kernel's AidV2 or CapkV2 bean the value is copied into. Where a meaning comes only from
+ * that field's name, or from a standard the code does not cite, the line says so; where it could
+ * not be established, the line says UNCERTAIN. Treat an UNCERTAIN line as a question, not an answer.
+ * Values quoted are those in the tables below.
+ *
+ * AID entries (every one of the 20 carries all 29 of these tags, once each):
+ *  - 9F06  Application Identifier as the terminal holds it. May be a partial: a 5-byte RID alone
+ *          matches every product of that scheme. EMV standard tag. Feeds aid.
+ *  - DF01  Application selection flag. 00 = partial match (the AID is a prefix; whatever PIX the
+ *          card carries still selects), per the vendor tag doc as quoted in the AID 8c comment
+ *          below. 01 presumably means exact match, but UNCERTAIN: only AID 14b uses 01, and its
+ *          own comment calls 01 "partial match", which contradicts the other reading. Feeds selFlag.
+ *  - 9F09  Application version number held by the terminal, 2 bytes: 008C in the Visa/Discover
+ *          style entries, 0002 in the Mastercard/AMEX style ones. EMV standard tag. Feeds version.
+ *          (9F08, the card's version number, is in neither table and the adapter does not read it.)
+ *  - DF11, DF12, DF13  Terminal Action Code Default, Online and Denial (the EMV TACs), 5 bytes
+ *          each. Meaning from the field names and the EMV TAC convention. Feed TACDefault,
+ *          TACOnline, TACDenial.
+ *  - DF14  Default DDOL, the data-object list used when the card supplies none: 9F3704 (the
+ *          Unpredictable Number). From the field name. Feeds dDOL.
+ *  - DF15, DF16, DF17  Threshold value, maximum target percentage and target percentage for biased
+ *          random selection in terminal risk management. From the field names only; UNCERTAIN
+ *          that the vendor means exactly that. Feed threshold, maxTargetPer, targetPer.
+ *  - 9F1B  Terminal floor limit, 4 bytes (00004000 = 16384 minor units). EMV standard tag. Feeds
+ *          floorLimit.
+ *  - 9F7B  Feeds termOfflineFloorLmt. UNCERTAIN what the vendor means by it: 9F7B is not a tag
+ *          this code explains, and every entry holds 6 zero bytes.
+ *  - DF19, DF20, DF21  Contactless offline floor limit, contactless transaction limit and CVM
+ *          limit. From the field names only. Feed termClssOfflineFloorLmt, termClssLmt, cvmLmt.
+ *  - 9F01  Acquirer Identifier. EMV standard tag. Feeds AcquierId (sic).
+ *  - 9F4E  Merchant Name and Location, ASCII ("SHOP 2" in every entry). EMV standard tag. Feeds
+ *          merchName.
+ *  - 9F15  Merchant Category Code. EMV standard tag. Feeds merchCateCode.
+ *  - 9F16  Merchant Identifier, 15 bytes (ASCII zeros in every entry). EMV standard tag. Feeds
+ *          merchId.
+ *  - 9F3C, 9F3D  Transaction Reference Currency Code and its exponent. EMV standard tags. Feed
+ *          referCurrCode, referCurrExp.
+ *  - DF8101  Reference currency conversion (0840). From the field name only. Feeds referCurrCon.
+ *  - DF8102  Default TDOL, the transaction-certificate data-object list: 9F3704. From the field
+ *          name. Feeds tDOL.
+ *  - DFC108  Feeds clsStatusCheck: a contactless status check switch, from the field name only.
+ *  - DFC109  Feeds zeroCheck: a zero-amount check switch, from the field name only.
+ *  - DFC10A  Kernel type, the contactless kernel that handles the AID. The values are established
+ *          by the per-entry comments below: 01 generic EMV, 02 Mastercard (PayPass), 03 Visa
+ *          (PayWave), 04 American Express, 05 Discover. Feeds kernelType.
+ *  - DFC10B  Parameter type, which interface the entry applies to. Established by the section
+ *          headings below: 00 default, 01 contact, 02 contactless. Feeds paramType.
+ *  - DFC10C  Kernel ID. UNCERTAIN how it differs from DFC10A: it equals DFC10A in every entry
+ *          except Discover, where DFC10A is 05 and DFC10C is 06. Feeds kernelID.
+ *  - DFC10D  Extended selection support flag, from the field name only; 01 in the two entries for
+ *          the proprietary AID F045535749544348303031 (8b and 14b) and 00 elsewhere, reason
+ *          unknown. Feeds extSelectSupFlg.
+ *
+ * CAPK entries (every one carries 9F06, 9F22, DF05, DF06, DF07, DF02, DF04 and DF03):
+ *  - 9F06  RID of the scheme the key belongs to, 5 bytes. Feeds rid.
+ *  - 9F22  Certification Authority Public Key Index, 1 byte. With the RID it names the key. Feeds
+ *          index.
+ *  - DF05  Expiry date as YYYYMMDD. Feeds expDate. All 26 entries read 20201231, which is in the
+ *          past; UNCERTAIN whether the kernel enforces it.
+ *  - DF06  Hash algorithm indicator (01 is SHA-1 in EMV). Feeds hashInd.
+ *  - DF07  Public key algorithm indicator (01 is RSA in EMV). Feeds arithInd.
+ *  - DF02  Modulus. Feeds modul.
+ *  - DF04  Public exponent. Feeds exponent.
+ *  - DF03  Checksum, 20 bytes, the SHA-1 check value over the key. Feeds checkSum.
  */
 object EmvConfiguration {
 
     /**
-     * An entry as tag to hex value. A tag that repeats keeps its first value, which is how the
-     * Ciontek adapter has always read these entries. Throws [IllegalArgumentException] if the
-     * entry is not well-formed — see [requireWellFormed].
+     * An entry as tag to hex value. Throws [IllegalArgumentException] if the entry is not
+     * well-formed — see [requireWellFormed].
+     *
+     * Three things to know before relying on the result:
+     *  - A tag that repeats keeps its first value, which is how each terminal library's adapter
+     *    has always read these entries. A repeat in the tables themselves is a hand-editing slip,
+     *    and EmvConfigurationTest rejects it.
+     *  - The result is flat. A constructed tag (one whose value is itself TLV) comes back as one
+     *    opaque hex value; its children are not parsed out. The tables hold none today.
+     *  - Hex is upper-cased on the way through, tags and values alike, because [IccData.parse]
+     *    does so. A value written in lower case in the table reads back in upper case: CAPK entry
+     *    16 (RID A000000004, index EF) is the one such today.
      */
     fun tlvOf(entry: String): Map<String, String> {
         requireWellFormed(entry)
@@ -25,9 +104,14 @@ object EmvConfiguration {
     }
 
     /**
-     * Throws [IllegalArgumentException], saying why, unless [entry] is hex of whole bytes whose
-     * every length byte stays inside the entry. Reuses [IccData.parse] for the BER-TLV rules
-     * (multi-byte tags such as DF8101, long-form lengths) so there is one reading of them.
+     * Throws [IllegalArgumentException], saying what was wrong, unless [entry] is non-empty hex of
+     * whole bytes that reads as BER-TLV from start to end. Reuses [IccData.parse] for the BER-TLV
+     * rules (multi-byte tags such as DF8101, long-form lengths) so there is one reading of them.
+     *
+     * [IccData.parse] reports only that it failed, not where or why, so the last check names the
+     * ways it can fail rather than claiming one: a tag cut off before its last byte, a length
+     * missing or cut off, an indefinite length, a length field wider than three bytes, or a
+     * length that runs past the end of the entry.
      */
     fun requireWellFormed(entry: String) {
         val where = entry.take(24)
@@ -35,7 +119,8 @@ object EmvConfiguration {
         require(entry.length % 2 == 0) { "odd number of hex digits (${entry.length}) in EMV entry: $where" }
         require(entry.all { it in "0123456789ABCDEFabcdef" }) { "not hex: EMV entry $where" }
         require(IccData.parse(entry).isNotEmpty()) {
-            "EMV entry is not well-formed TLV (a length byte overruns the entry): $where"
+            "EMV entry is not well-formed BER-TLV — a tag or length is cut off, a length is " +
+                "indefinite or too wide, or a length runs past the end of the entry: $where"
         }
     }
 

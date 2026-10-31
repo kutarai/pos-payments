@@ -1,6 +1,7 @@
 package zw.co.unipay.payments
 
 import zw.co.unipay.payments.card.EmvConfiguration
+import zw.co.unipay.payments.card.IccData
 import zw.co.unipay.payments.card.EmvConfiguration.tlvOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -48,6 +49,7 @@ class EmvConfigurationTest {
         for (entry in EmvConfiguration.AID_TLV) {
             assertTrue("entry does not start with 9F06: ${entry.take(24)}", entry.startsWith("9F06"))
             EmvConfiguration.requireWellFormed(entry)
+            assertNoRepeatedTag(entry)
 
             val declared = entry.substring(4, 6).toInt(16)
             assertEquals("declared length of 9F06 disagrees with the value in ${entry.take(24)}",
@@ -60,6 +62,7 @@ class EmvConfigurationTest {
         assertTrue("the CAPK table is empty", EmvConfiguration.CAPK_TLV.isNotEmpty())
         for (entry in EmvConfiguration.CAPK_TLV) {
             EmvConfiguration.requireWellFormed(entry)
+            assertNoRepeatedTag(entry)
             val tlv = tlvOf(entry)
 
             val rid = tlv["9F06"]
@@ -81,7 +84,7 @@ class EmvConfigurationTest {
         val entries = EmvConfiguration.AID_TLV.filter { aidOf(it).startsWith(PROPRIETARY_669034) }
         assertTrue("no AID table entry for BIN 669034", entries.isNotEmpty())
 
-        val contactless = entries.filter { tlvOf(it)["DFC10B"] == "02" }
+        val contactless = entries.filter { tlvOf(it)[PARAM_TYPE] == CONTACTLESS }
         assertTrue("BIN 669034 has no contactless entry — a tap would not select it",
             contactless.isNotEmpty())
     }
@@ -117,6 +120,38 @@ class EmvConfigurationTest {
     }
 
     @Test
+    fun `requireWellFormed rejects an entry that ends mid-tag`() {
+        // 9F06 is a good entry; the trailing DF starts a tag whose low five bits are all set, so a
+        // second tag byte must follow, and none does.
+        assertRejected("9F0605A000000003" + "DF")
+        // A tag with no length byte at all.
+        assertRejected("9F0605A000000003" + "DF01")
+    }
+
+    @Test
+    fun `requireWellFormed rejects an indefinite length`() {
+        // 0x80 says the value runs to an end-of-contents marker, which these tables never use.
+        assertRejected("9F0680A0000000030000")
+    }
+
+    @Test
+    fun `requireWellFormed rejects a length field that is too wide`() {
+        // 0x84 says four bytes of length follow; this parser accepts at most three.
+        assertRejected("9F06840000000500A000000003")
+    }
+
+    @Test
+    fun `requireWellFormed accepts a long-form length and tlvOf reads through it`() {
+        // 0x81 05: one byte of length follows, saying five.
+        assertEquals(mapOf("9F06" to "A000000003", "DF01" to "00"),
+            tlvOf("9F068105A000000003" + "DF010100"))
+        // 0x82 0005: two bytes of length follow.
+        assertEquals(mapOf("9F06" to "A000000003"), tlvOf("9F06820005A000000003"))
+        // And a long-form length that overruns is still caught.
+        assertRejected("9F068106A000000003")
+    }
+
+    @Test
     fun `requireWellFormed accepts what the tables actually hold`() {
         EmvConfiguration.AID_TLV.forEach { EmvConfiguration.requireWellFormed(it) }
         EmvConfiguration.CAPK_TLV.forEach { EmvConfiguration.requireWellFormed(it) }
@@ -131,10 +166,10 @@ class EmvConfigurationTest {
 
     @Test
     fun `tlvOf reads every tag in a known VISA entry`() {
-        // The Visa contactless entry: RID A000000003, paramType 02 (DFC10B).
+        // The Visa contactless entry: RID A000000003, contactless parameter type.
         val visaContactless = EmvConfiguration.AID_TLV.single {
             val tlv = tlvOf(it)
-            tlv["9F06"] == "A000000003" && tlv["DFC10B"] == "02"
+            tlv["9F06"] == "A000000003" && tlv[PARAM_TYPE] == CONTACTLESS
         }
 
         assertEquals(
@@ -175,8 +210,15 @@ class EmvConfigurationTest {
 
     @Test
     fun `tlvOf keeps the first value when a tag repeats`() {
-        // The Ciontek adapter has always read the first occurrence; the shared parser must agree.
+        // Each terminal library's adapter has always read the first occurrence; the shared parser must agree.
         assertEquals("01", tlvOf("DF010101" + "DF010102")["DF01"])
+    }
+
+    /** A tag repeated inside one table entry is a hand-editing slip that [tlvOf] would swallow. */
+    private fun assertNoRepeatedTag(entry: String) {
+        val tags = IccData.parse(entry).map { it.tag }
+        val repeated = tags.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        assertTrue("tag(s) $repeated appear more than once in ${entry.take(24)}", repeated.isEmpty())
     }
 
     private fun assertRejected(entry: String) {
@@ -189,6 +231,15 @@ class EmvConfigurationTest {
     }
 
     private companion object {
+        /**
+         * DFC10B is the parameter type: which interface an AID entry applies to. The values are
+         * the ones the table's own section headings use ("Contactless AIDs (paramType=02)",
+         * "Contact AIDs (paramType=01)", "Default AIDs (paramType=00)"); see the tag dictionary
+         * on EmvConfiguration.
+         */
+        const val PARAM_TYPE = "DFC10B"
+        const val CONTACTLESS = "02"
+
         /** The scheme's own RID: F-category, carrying BIN 669034. Given, not derived. */
         const val PROPRIETARY_669034 = "F716669034"
     }
