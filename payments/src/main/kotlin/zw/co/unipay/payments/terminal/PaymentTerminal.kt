@@ -40,10 +40,46 @@ interface SecurePinPad {
     suspend fun requestPin(promptAmount: String, maxLength: Int = 12): ByteArray?
 }
 
+/** One thing on a slip from the unit's own printer, in the order it comes out. */
+sealed interface PrintItem {
+    /** A line of text, left-aligned, as [OnboardPrinter.printLines] prints it. */
+    data class Line(val text: String) : PrintItem
+
+    /**
+     * A QR code encoding [payload], centred on the paper. Its size is the printer's to choose:
+     * the point is that it scans, and every make here draws it about 200 dots square.
+     */
+    data class QrCode(val payload: String) : PrintItem
+}
+
 /** Paper out of the unit's own printer, as opposed to a Bluetooth one. */
 interface OnboardPrinter {
     suspend fun printLines(lines: List<String>): Boolean
     fun isAvailable(): Boolean
+
+    /**
+     * Whether [print] can put a [PrintItem.QrCode] on paper. False unless the implementation
+     * says otherwise, so a printer written before QR codes existed answers truthfully.
+     */
+    val printsQrCodes: Boolean get() = false
+
+    /**
+     * Prints [items] in order as one job, and returns whether the printer accepted it.
+     *
+     * A printer that cannot draw QR codes refuses a job containing one — returns false and prints
+     * nothing — rather than leaving the code out: a receipt whose QR code is the proof of payment
+     * is worse without it than not printed, and only the caller knows which kind it has. A caller
+     * that is content to go without asks [printsQrCodes] first and leaves the codes out itself.
+     */
+    suspend fun print(items: List<PrintItem>): Boolean {
+        val lines = items.map { item ->
+            when (item) {
+                is PrintItem.Line -> item.text
+                is PrintItem.QrCode -> return false
+            }
+        }
+        return printLines(lines)
+    }
 }
 
 /**
