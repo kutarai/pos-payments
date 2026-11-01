@@ -30,4 +30,13 @@ class OnboardPrinterTest {
         assertFalse(p.print(listOf(PrintItem.Line("A"), PrintItem.QrCode("https://x"))))
         assertTrue(p.printed.isEmpty())
     }
+
+    @Test fun `bold, alignment and rows degrade to the same words on a plain printer`() = runBlocking {
+        val p = TextOnly()
+        assertTrue(p.print(listOf(
+            PrintItem.Line("RECEIPT", PrintAlign.CENTER, bold = true),
+            PrintItem.Row("Total", "12.50"),
+        )))
+        assertEquals(listOf(listOf("RECEIPT", "Total 12.50")), p.printed)
+    }
 }

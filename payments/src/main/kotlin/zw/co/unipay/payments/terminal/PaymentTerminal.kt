@@ -40,10 +40,27 @@ interface SecurePinPad {
     suspend fun requestPin(promptAmount: String, maxLength: Int = 12): ByteArray?
 }
 
+/** Where a [PrintItem.Line] sits across the paper. */
+enum class PrintAlign { LEFT, CENTER, RIGHT }
+
 /** One thing on a slip from the unit's own printer, in the order it comes out. */
 sealed interface PrintItem {
-    /** A line of text, left-aligned, as [OnboardPrinter.printLines] prints it. */
-    data class Line(val text: String) : PrintItem
+    /**
+     * A line of text. With the defaults, exactly what [OnboardPrinter.printLines] prints for the
+     * same string.
+     */
+    data class Line(
+        val text: String,
+        val align: PrintAlign = PrintAlign.LEFT,
+        val bold: Boolean = false,
+    ) : PrintItem
+
+    /**
+     * One line with [left] at the left edge and [right] at the right — a label and its amount.
+     * Laid out by the printer, which knows its own font and width; a caller padding with spaces
+     * would only line up on a fixed-width font.
+     */
+    data class Row(val left: String, val right: String, val bold: Boolean = false) : PrintItem
 
     /**
      * A QR code encoding [payload], centred on the paper. Its size is the printer's to choose:
@@ -66,15 +83,19 @@ interface OnboardPrinter {
     /**
      * Prints [items] in order as one job, and returns whether the printer accepted it.
      *
-     * A printer that cannot draw QR codes refuses a job containing one — returns false and prints
-     * nothing — rather than leaving the code out: a receipt whose QR code is the proof of payment
-     * is worse without it than not printed, and only the caller knows which kind it has. A caller
-     * that is content to go without asks [printsQrCodes] first and leaves the codes out itself.
+     * Bold and alignment are presentation: a printer that cannot honour them prints the same
+     * words plainly (this default prints a [PrintItem.Row] as its two halves separated by a
+     * space). A QR code is content: a printer that cannot draw QR codes refuses a job containing
+     * one — returns false and prints nothing — rather than leaving the code out, because a
+     * receipt whose QR code is the proof of payment is worse without it than not printed, and
+     * only the caller knows which kind it has. A caller content to go without asks
+     * [printsQrCodes] first and leaves the codes out itself.
      */
     suspend fun print(items: List<PrintItem>): Boolean {
         val lines = items.map { item ->
             when (item) {
                 is PrintItem.Line -> item.text
+                is PrintItem.Row -> "${item.left} ${item.right}"
                 is PrintItem.QrCode -> return false
             }
         }
