@@ -200,6 +200,16 @@ internal fun CryptoPaymentDialog(
         }
     }
 
+    // The customer's screen, on a terminal that has one, shows the payment request exactly while
+    // this one does: not once the money is seen, nor after a failure or the end of the payment.
+    CustomerFacingQr(
+        payload = paymentUri.takeIf { qr != null && failure == null && !seen && !settled },
+        caption = listOf(
+            "Scan with your crypto wallet",
+            if (assetAmount.isNotEmpty() && asset.isNotEmpty()) "$assetAmount $asset" else amount.format(),
+        ),
+    )
+
     PaymentScreenSurface(
         onDismissRequest = { onResult(CryptoPaymentResult.Cancelled) },
         // Once the money is on the chain there is nothing for back to undo: it has

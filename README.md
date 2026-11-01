@@ -15,12 +15,12 @@ copies of a payment flow drift apart in exactly the places that cost money.
 | Package | What it holds |
 |---|---|
 | `model` | `Money`, the `Payment` kinds, transaction type and status |
-| `terminal` | The ports a terminal implements — identity, PIN pad, scanner, onboard printer — and the `Terminals` registry an application's start-up fills; also `HardwareSerial` (choosing a trustworthy serial from what a unit reports), `PinEncryptionScheme` and the terminal's identity snapshot |
+| `terminal` | The ports a terminal implements — identity, PIN pad, scanner, onboard printer (lines, rows, QR codes), and an optional customer-facing display — and the `Terminals` registry an application's start-up fills; also `HardwareSerial` (choosing a trustworthy serial from what a unit reports), `PinEncryptionScheme` and the terminal's identity snapshot |
 | `card` | The EMV port, the `CardPaymentDriver` a screen drives and its registry, the drivers that guard or refuse it, TLV parsing, the flow rules every make shares, and `EmvConfiguration`: the one source of the AID table and CA public keys that each device library adapts for its own kernel |
 | `switching` | gRPC to the payment switch, and the protos both sides share |
 | `qr` | EMVCo QR payloads and the bitmap a customer scans |
 | `cash` | `CashTender` — what is owed, what was handed over, what goes back |
-| `ui` | The card screen and the payment dialogs (mobile money, QR, cash, crypto, banking) |
+| `ui` | The card screen and the payment dialogs (mobile money, QR, cash, crypto, banking). The QR and crypto dialogs also put their code on the terminal's customer display, if it has one, for exactly as long as they show it |
 
 Printing — the Bluetooth and Wi-Fi Direct transports, printer settings, ESC/POS and the setup
 screen — lives in the sibling `Printers` library (`../Printers`), which both hosts use directly.

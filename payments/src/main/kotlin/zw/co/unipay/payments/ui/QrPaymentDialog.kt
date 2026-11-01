@@ -364,6 +364,13 @@ fun QrPaymentDialog(
         }
     }
 
+    // The customer's screen, on a terminal that has one, shows the code exactly while this one
+    // does: from the switch's acknowledgement until approval, failure, timeout or a cancel.
+    CustomerFacingQr(
+        payload = qrPayload.takeIf { flowState == QrFlowState.DISPLAYING_QR && qrBitmap != null },
+        caption = listOf("Scan to pay", amount.format()),
+    )
+
     // Only the ending screen can be dismissed. While a code is up the customer may already
     // have scanned it and the switch may already be holding the payment, and a stray back press
     // must not abandon that — only Cancel, which an operator presses deliberately. APPROVED is

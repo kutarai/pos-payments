@@ -104,6 +104,26 @@ interface OnboardPrinter {
 }
 
 /**
+ * A screen facing the customer, beside the one the cashier works on.
+ *
+ * Only some terminals have one, so it is optional on [Terminal] and null by default. What goes on
+ * it is the payment screens' business: a QR code the customer is to scan goes up while — and only
+ * while — the cashier's screen is showing that same code, and comes down the moment it is no
+ * longer good, so nobody is left scanning a code that no longer leads anywhere.
+ */
+interface CustomerDisplay {
+    /**
+     * Shows a QR code encoding [payload] with the [caption] lines under it (what to do, how much),
+     * replacing whatever was there, until [clear] or the next call. Returns whether the screen
+     * accepted it; false is never an error the payment should stop for.
+     */
+    suspend fun showQr(payload: String, caption: List<String> = emptyList()): Boolean
+
+    /** Returns the screen to whatever it shows when the terminal is idle. */
+    suspend fun clear()
+}
+
+/**
  * The pieces of a terminal an application asks for by name.
  *
  * Every one is optional because they genuinely are: a countertop unit has a printer and no
@@ -115,6 +135,12 @@ interface Terminal {
     val pinPad: SecurePinPad?
     val barcodeReader: BarcodeScanner?
     val onboardPrinter: OnboardPrinter?
+
+    /**
+     * The customer-facing screen, on a terminal that has one. Null by default, so a make without
+     * one need say nothing.
+     */
+    val customerDisplay: CustomerDisplay? get() = null
 
     /**
      * Whether the hardware is usable right now, observable so a screen can show it without polling.
