@@ -15,27 +15,32 @@ payment flow drift apart in exactly the places that cost money.
 | Package | What it holds |
 |---|---|
 | `model` | `Money`, the `Payment` kinds, transaction type and status |
-| `terminal` | The ports a terminal implements — identity, PIN pad, scanner, onboard printer |
-| `card` | The EMV port, the `CardPaymentDriver` a screen drives, TLV parsing |
+| `terminal` | The ports a terminal implements — identity, PIN pad, scanner, onboard printer — and the `Terminals` registry an application's start-up fills; also `HardwareSerial` (choosing a trustworthy serial from what a unit reports), `PinEncryptionScheme` and the terminal's identity snapshot |
+| `card` | The EMV port, the `CardPaymentDriver` a screen drives and its registry, the drivers that guard or refuse it, TLV parsing, the flow rules every make shares, and `EmvConfiguration`: the one source of the AID table and CA public keys that each device library adapts for its own kernel |
 | `switching` | gRPC to the payment switch, and the protos both sides share |
 | `qr` | EMVCo QR payloads and the bitmap a customer scans |
 | `cash` | `CashTender` — what is owed, what was handed over, what goes back |
-| `ui` | The card screen and the mobile-money, QR and cash dialogs |
+| `ui` | The card screen and the payment dialogs (mobile money, QR, cash, crypto, banking) |
 
 Printing — the Bluetooth and Wi-Fi Direct transports, printer settings, ESC/POS and the setup
 screen — lives in the sibling `Printers` library (`../Printers`), which both hosts use directly.
 
 ## Supporting a new terminal
 
-Implement `card.CardPaymentDriver`, and as much of `terminal` as the hardware has. Then, once, at
-application start-up:
+A terminal is its own library, beside [CS20](../CS20) (Ciontek) and [Z150](../Z150) (ZCS SmartPos).
+It implements `card.CardPaymentDriver`, and as much of `terminal` as the hardware has, and reads the
+EMV tables from `EmvConfiguration` rather than keeping its own. It exposes
+`zw.co.unipay.terminal.TerminalSupport`, under that same fully-qualified name in every device
+library, and declares its vendor's manifest components in its own `AndroidManifest.xml`. The
+application then registers it, once, at start-up, naming no vendor:
 
 ```kotlin
-CardPaymentDrivers.register { context -> AcmeCardPaymentDriver(context) }
+TerminalSupport.install(applicationContext, switchIntegration) { merchantConfigNow() }
 ```
 
-Every payment screen asks the registry, so nothing above the driver changes. `CS20` is the
-worked example.
+`install` fills the two registries, `CardPaymentDrivers` and `Terminals`; every payment screen asks
+them, so nothing above the driver changes. Each application flavour depends on exactly one device
+library. See either library's README for what `install` registers and why the two differ.
 
 ## Using it
 
@@ -47,8 +52,8 @@ include(":payments")
 project(":payments").projectDir = file("/path/to/shared/Payments/payments")
 ```
 
-Applications that also want the Ciontek hardware should depend on `CS20` instead, which exposes
-this as `api`.
+Applications that run on a terminal depend on that terminal's device library (`CS20` or `Z150`),
+which exposes this as `api`.
 
 ## Building on its own
 
@@ -56,5 +61,8 @@ this as `api`.
 ./gradlew :payments:assembleDebug :payments:testDebugUnitTest
 ```
 
-The tests are the arithmetic and the wire formats — change, receipt widths, ESC/POS sequences.
-They need no device, and they are the ones worth running before anything reaches a counter.
+The tests are the arithmetic, the wire formats and the rules that must not differ between makes of
+terminal: cash tender, EMV QR payloads, switch requests and reversals, the EMV tables and TLV data,
+the guarding and refusing card drivers, the `Terminals` registry, serial selection, the PIN
+encryption scheme and the identity snapshot. They need no device, and they are the ones worth
+running before anything reaches a counter.
