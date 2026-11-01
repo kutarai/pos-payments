@@ -97,6 +97,21 @@ class BankingTransactionTest {
 
     // ----- what the agent is told when the card does not finish ----------------------------
 
+    // ----- the cash warning, which is the branch both makes must reach --------------------
+    //
+    // These four pin the `switchApproved` branch of [declineMessage] itself, not either
+    // terminal's route to it. **That branch has twice become unreachable on the ZCS terminal
+    // while staying reachable on the CS20**, by two different routes a round apart: first by
+    // reading the kernel's ending as "the bank approved, so it is a sale" for every transaction
+    // type, and then by letting a cancel that landed after the approval report "nothing has been
+    // charged". Both times the same card, broken off or cancelled at the same moment, was a
+    // refusal carrying this warning on one make and a Success that opened the drawer on the
+    // other — which is exactly what this file's own header says must not happen.
+    //
+    // The parity rested on each terminal library's own tests, so nothing here failed when they
+    // diverged. It does now: deleting or weakening this branch breaks a test in the module that
+    // owns the rule.
+
     /** The account has been debited, so retrying would debit it again. */
     @Test
     fun `a withdrawal the bank approved is not retried and the cash waits on the bank`() {
@@ -117,6 +132,53 @@ class BankingTransactionTest {
             switchUnavailable = false, switchDisplayMessage = "Approved", switchApproved = true,
         )
         assertTrue(message, message.startsWith("The bank approved this payment"))
+    }
+
+    /** The account may already be credited, so retrying would credit it twice. */
+    @Test
+    fun `a deposit the bank approved is not retried and the cash waits on the bank`() {
+        val message = declineMessage(
+            code = 6, desc = null, fallbackLabel = "Transaction declined",
+            switchUnavailable = false, switchDisplayMessage = "Approved",
+            switchApproved = true, transactionType = CardTransactionType.CASH_DEPOSIT,
+        )
+        assertTrue(message, message.contains("deposit"))
+        assertTrue(message, message.contains("do not retry"))
+        assertTrue(message, message.contains("before returning the cash"))
+    }
+
+    @Test
+    fun `an enquiry the bank answered and the card did not finish is simply retried`() {
+        // Nothing moved, so this is the one of the four that may safely be tried again.
+        val message = declineMessage(
+            code = 6, desc = null, fallbackLabel = "Transaction declined",
+            switchUnavailable = false, switchDisplayMessage = "Approved",
+            switchApproved = true, transactionType = CardTransactionType.BALANCE_ENQUIRY,
+        )
+        assertTrue(message, message.contains("Try again"))
+        assertFalse(message, message.contains("do not retry"))
+    }
+
+    @Test
+    fun `no transaction type reports a standing authorisation as nothing having happened`() {
+        // The property that matters across all four, stated once: when the bank has approved and
+        // the card has not finished, an authorisation is standing at the issuer and the message
+        // must say so. A cashier told "cancelled" or "nothing was charged" has no reason to
+        // check, and on a withdrawal that is the customer's money gone with the till believing
+        // otherwise.
+        for (type in CardTransactionType.entries) {
+            val message = declineMessage(
+                code = 6, desc = null, fallbackLabel = "Transaction declined",
+                switchUnavailable = false, switchDisplayMessage = "Approved",
+                switchApproved = true, transactionType = type,
+            )
+            assertTrue("$type: must say the bank answered", message.contains("bank", ignoreCase = true))
+            assertFalse("$type: must not read as an approval", message.trim() == "Approved")
+            assertFalse("$type: must not claim nothing happened",
+                message.contains("Nothing has been charged", ignoreCase = true))
+            assertFalse("$type: must not read as a cancellation",
+                message.contains("cancelled", ignoreCase = true))
+        }
     }
 
     /** A customer who was never asked for a PIN must not be told they typed it wrongly. */
