@@ -6,9 +6,9 @@ Card (EMV contact, contactless and magstripe), mobile money, QR and cash — the
 conversation, the screens and the slip. Nothing in here knows what make of terminal it is running
 on, and nothing in here knows what is being sold.
 
-Used by one point-of-sale application today. It is a library rather than part of it because an EFT
-application on the same counter takes the same payments in the same way, and two copies of a
-payment flow drift apart in exactly the places that cost money.
+Used by two applications today: SynergyPOS, at the point of sale, and ProCity, which takes the
+same payments on the same counter. It is a library rather than part of either because two
+copies of a payment flow drift apart in exactly the places that cost money.
 
 ## What is in it
 
