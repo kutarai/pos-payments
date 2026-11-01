@@ -39,7 +39,7 @@ TerminalSupport.install(applicationContext, switchIntegration) { merchantConfigN
 ```
 
 `install` fills the two registries, `CardPaymentDrivers` and `Terminals`; every payment screen asks
-them, so nothing above the driver changes. Each application flavour depends on exactly one device
+them, so nothing above the driver changes. An application build depends on exactly one device
 library. See either library's README for what `install` registers and why the two differ.
 
 ## Using it
