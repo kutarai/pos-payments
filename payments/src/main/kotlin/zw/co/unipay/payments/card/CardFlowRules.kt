@@ -1,5 +1,7 @@
 package zw.co.unipay.payments.card
 
+import zw.co.unipay.payments.model.CardType
+
 /**
  * The rules a card transaction follows that belong to the acquirer, not to a make of terminal.
  *
@@ -261,4 +263,34 @@ fun pinVerified(onlinePinBlock: ByteArray?, cvmResults: String?): Boolean {
     val method = cvmResults.substring(0, 2).toIntOrNull(16)?.and(0x3F) ?: return false
     val result = cvmResults.substring(4, 6).toIntOrNull(16) ?: return false
     return method in setOf(0x01, 0x03, 0x04, 0x05) && result == 0x02
+}
+
+/**
+ * The card scheme the first digits of a PAN name.
+ *
+ * Not an acquirer rule — nothing about an authorisation turns on this, and the switch is told the
+ * scheme by the AID and the BIN, not by this. It is here all the same, and `public`, because it
+ * is what goes on the **receipt** and on the **screen**: a BIN table that differed between makes
+ * of terminal would print a different card brand on two receipts for the same card, at the same
+ * counter, and nobody looking at either receipt could tell which was right.
+ *
+ * It was two copies — a private `detectCardType` in the CS20's Ciontek processor and a
+ * `cardSchemeOf` in the ZCS driver — for about an hour, on the reasoning that display-only is
+ * harmless. Display-only is not the same as harmless, and "we will move it when it matters" is
+ * how the first copy got made.
+ *
+ * [pan] may be a full PAN or only its leading digits; anything that matches nothing, the empty
+ * string included, is [CardType.OTHER]. Note that a **last** four digits tells this function
+ * nothing useful — it reads from the front — and a caller that passes one will get a scheme
+ * chosen by the wrong end of the card number.
+ */
+fun cardSchemeOf(pan: String): CardType = when {
+    pan.startsWith("4") -> CardType.VISA
+    pan.startsWith("5") || pan.startsWith("2") -> CardType.MASTERCARD
+    pan.startsWith("34") || pan.startsWith("37") -> CardType.AMEX
+    pan.startsWith("6011") || pan.startsWith("65") -> CardType.DISCOVER
+    pan.startsWith("62") -> CardType.UNIONPAY
+    pan.startsWith("35") -> CardType.JCB
+    pan.startsWith("36") || pan.startsWith("38") -> CardType.DINERS
+    else -> CardType.OTHER
 }
