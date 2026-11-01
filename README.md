@@ -27,7 +27,7 @@ screen — lives in the sibling `Printers` library (`../Printers`), which both h
 
 ## Supporting a new terminal
 
-A terminal is its own library, beside [CS20](../CS20) (Ciontek) and [Z150](../Z150) (ZCS SmartPos).
+A terminal is its own library, beside [CS20](../CS20) (Ciontek) and [Z108](../Z108) (ZCS SmartPos).
 It implements `card.CardPaymentDriver`, and as much of `terminal` as the hardware has, and reads the
 EMV tables from `EmvConfiguration` rather than keeping its own. It exposes
 `zw.co.unipay.terminal.TerminalSupport`, under that same fully-qualified name in every device
@@ -52,7 +52,7 @@ include(":payments")
 project(":payments").projectDir = file("/path/to/shared/Payments/payments")
 ```
 
-Applications that run on a terminal depend on that terminal's device library (`CS20` or `Z150`),
+Applications that run on a terminal depend on that terminal's device library (`CS20` or `Z108`),
 which exposes this as `api`.
 
 ## Building on its own
