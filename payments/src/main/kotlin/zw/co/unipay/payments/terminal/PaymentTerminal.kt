@@ -1,5 +1,6 @@
 package zw.co.unipay.payments.terminal
 
+import android.graphics.Bitmap
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -110,6 +111,12 @@ interface OnboardPrinter {
  * it is the payment screens' business: a QR code the customer is to scan goes up while — and only
  * while — the cashier's screen is showing that same code, and comes down the moment it is no
  * longer good, so nobody is left scanning a code that no longer leads anywhere.
+ *
+ * Between codes the screen rests on what the application last gave it: the bill being rung up
+ * ([showBill]) or, outside a sale, a logo ([showLogo]). A code always wins while it is up: resting
+ * content sent meanwhile is kept and appears when the code is cleared, so the sale screen and the
+ * payment screens never fight over the screen. Both are optional, false by default, so a make
+ * whose screen can only show codes need say nothing about them.
  */
 interface CustomerDisplay {
     /**
@@ -119,8 +126,25 @@ interface CustomerDisplay {
      */
     suspend fun showQr(payload: String, caption: List<String> = emptyList()): Boolean
 
-    /** Returns the screen to whatever it shows when the terminal is idle. */
+    /**
+     * Takes down a code shown by [showQr]: the screen returns to its resting content if the
+     * application has given it any, else to whatever it shows when the terminal is idle.
+     */
     suspend fun clear()
+
+    /**
+     * Rests the screen on the bill so far: [total], already formatted with its currency, and how
+     * many items are on the ticket. Returns whether the screen accepted it (false while a code is
+     * up only if the screen could not keep it for later).
+     */
+    suspend fun showBill(total: String, itemCount: Int): Boolean = false
+
+    /**
+     * Rests the screen on [logo], drawn as large as fits and centred on [background] (an ARGB
+     * colour). The screen never recycles [logo] but keeps it, to show it again when a code comes
+     * down, so the caller must not recycle it while it is the resting content.
+     */
+    suspend fun showLogo(logo: Bitmap, background: Int = 0xFF000000.toInt()): Boolean = false
 }
 
 /**
