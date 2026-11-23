@@ -38,7 +38,7 @@ internal fun CashPaymentDialog(
     var tenderedExpanded by remember { mutableStateOf(false) }
     var changeExpanded by remember { mutableStateOf(false) }
 
-    val tendered = tenderedText.toDoubleOrNull() ?: 0.0
+    val tendered = tenderedText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0
 
     // Everything on screen comes from CashChange.compute, the same code that
     // produces the recorded outcome. Null while the tender is empty, short, or
@@ -47,11 +47,11 @@ internal fun CashPaymentDialog(
     // The tender in the sale's currency, for the shortfall line when cash is null.
     var tenderedInBase by remember { mutableStateOf<Double?>(null) }
     LaunchedEffect(tendered, tenderedCurrency, changeCurrency) {
-        if (tendered <= 0) {
-            cash = null
-            tenderedInBase = null
-            return@LaunchedEffect
-        }
+        // Cleared before anything suspends, so a result for the previous inputs can
+        // never be completed while the new one is being worked out.
+        cash = null
+        tenderedInBase = null
+        if (tendered <= 0) return@LaunchedEffect
         val money = Money(tendered, tenderedCurrency)
         cash = CashChange.compute(total, money, changeCurrency, convertCurrency)
         tenderedInBase = cash?.tenderedInSale?.amount
@@ -149,6 +149,11 @@ internal fun CashPaymentDialog(
                 }
 
                 // Buttons
+                // Only a result computed for exactly what is on screen may be completed.
+                val matching = cash?.takeIf {
+                    it.tendered == Money(tendered, tenderedCurrency) &&
+                        (it.changeCurrencyFellBack || it.changeGiven.currency == changeCurrency)
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -159,8 +164,8 @@ internal fun CashPaymentDialog(
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Cancel", fontSize = 18.sp) }
                     Button(
-                        onClick = { cash?.let { onResult(CashResult.Completed(it)); onDismiss() } },
-                        enabled = cash != null,
+                        onClick = { matching?.let { onResult(CashResult.Completed(it)); onDismiss() } },
+                        enabled = matching != null,
                         modifier = Modifier.weight(1f).height(56.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Complete", fontSize = 18.sp, fontWeight = FontWeight.Bold) }

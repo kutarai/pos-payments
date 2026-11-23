@@ -3,7 +3,6 @@ package zw.co.unipay.payments.ui
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -76,9 +75,30 @@ class CashChangeTest {
     @Test fun completedOutcomeCarriesBothChanges() {
         val c = compute(usd10, Money(300.0, "ZWG"), "ZWG")!!
         val outcome = c.toOutcome()
-        assertNotNull(outcome)
         assertEquals(Money(300.0, "ZWG"), outcome.tenderedAmount)
         assertEquals(Money(1.54, "USD"), outcome.changeAmount)
         assertEquals(Money(40.0, "ZWG"), outcome.changeGiven)
+    }
+
+    @Test fun nonFiniteTenderGivesNullWithoutThrowing() {
+        assertNull(compute(usd10, Money(Double.POSITIVE_INFINITY, "USD"), "USD"))
+    }
+
+    @Test fun nonFiniteTotalGivesNull() {
+        assertNull(compute(Money(Double.POSITIVE_INFINITY, "USD"), Money(20.0, "USD"), "USD"))
+    }
+
+    @Test fun nonFiniteConvertedAmountGivesNull() {
+        val broken: suspend (Money, String) -> Money? = { m, _ -> Money(Double.POSITIVE_INFINITY, m.currency) }
+        assertNull(runBlocking { CashChange.compute(usd10, Money(300.0, "ZWG"), "USD", broken) })
+    }
+
+    @Test fun nonFiniteChangeConversionFallsBack() {
+        val broken: suspend (Money, String) -> Money? = { m, to ->
+            if (m.currency == to) m else Money(Double.POSITIVE_INFINITY, to)
+        }
+        val c = runBlocking { CashChange.compute(usd10, Money(20.0, "USD"), "ZWG", broken) }!!
+        assertTrue(c.changeCurrencyFellBack)
+        assertEquals(Money(10.0, "USD"), c.changeGiven)
     }
 }

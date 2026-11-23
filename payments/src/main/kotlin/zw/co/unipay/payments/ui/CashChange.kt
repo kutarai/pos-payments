@@ -37,6 +37,7 @@ data class CashChange(
             changeCurrency: String,
             convert: suspend (Money, String) -> Money?,
         ): CashChange? {
+            if (!total.amount.isFinite() || !tendered.amount.isFinite()) return null
             val saleCurrency = total.currency
             val tenderedRaw = convertOrNull(tendered, saleCurrency, convert) ?: return null
             val tenderedInSale = tenderedRaw.round()
@@ -65,7 +66,7 @@ data class CashChange(
             convert: suspend (Money, String) -> Money?,
         ): BigDecimal? =
             if (money.currency == to) money.amount.toBigDecimal()
-            else convert(money, to)?.amount?.toBigDecimal()
+            else convert(money, to)?.amount?.takeIf { it.isFinite() }?.toBigDecimal()
 
         private fun BigDecimal.round(): BigDecimal = setScale(2, RoundingMode.HALF_UP)
 
