@@ -32,7 +32,9 @@ import zw.co.unipay.payments.terminal.TerminalSnapshot
  * @param cardDriver the terminal's card flow — CS20 supplies one.
  * @param currencies what the counter will accept as cash; empty means the bill's
  *        currency only.
- * @param convertCurrency how to value a tender given in another currency.
+ * @param convertCurrency how to value a tender, and the change, given in another currency.
+ *        It must not round: [CashChange] rounds once, so a converter that rounds first
+ *        makes the change wrong (USD 1.54 x 26 = ZWG 40.04, not 40.00).
  * @param cardPaymentEnabled false when there is no card reader, so the card tile
  *        is offered but refuses rather than opening a flow that cannot finish.
  * @param electronicPaymentsEnabled false when this terminal has no identity its switch would

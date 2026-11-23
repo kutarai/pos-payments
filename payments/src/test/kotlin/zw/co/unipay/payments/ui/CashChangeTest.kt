@@ -46,6 +46,16 @@ class CashChangeTest {
         assertEquals(Money(1.54, "USD"), c.changeInSale)
     }
 
+    // CashChange.compute documents that `convert` must not round. A converter that does round
+    // to 2 dp (as the till's display conversion does) makes the change 1.54 x 26 = 40.04.
+    @Test fun aRoundingConverterRoundsTwiceAndGivesTheWrongChange() {
+        val rounding: suspend (Money, String) -> Money? = { money, to ->
+            convert(money, to)?.let { Money(Math.round(it.amount * 100.0) / 100.0, it.currency) }
+        }
+        val c = runBlocking { CashChange.compute(usd10, Money(300.0, "ZWG"), "ZWG", rounding) }!!
+        assertEquals(Money(40.04, "ZWG"), c.changeGiven)
+    }
+
     @Test fun saleCurrencyTenderForeignChange() {
         val c = compute(usd10, Money(20.0, "USD"), "ZWG")!!
         assertEquals(Money(260.0, "ZWG"), c.changeGiven)

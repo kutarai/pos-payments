@@ -21,7 +21,10 @@ data class CashChange(
     val changeInSale: Money,
     /** The change handed back, in the currency it is given in, 2 dp. */
     val changeGiven: Money,
-    /** True when there was no rate for the chosen change currency, so [changeGiven] is in the sale's. */
+    /**
+     * True when there was no rate for the chosen change currency, so [changeGiven] is in the
+     * sale's.
+     */
     val changeCurrencyFellBack: Boolean,
 ) {
     companion object {
@@ -30,6 +33,7 @@ data class CashChange(
          *
          * The tender is converted unrounded, the change is worked out from that, and the change
          * is converted unrounded again; each reported value is rounded half-up, once.
+         * [convert] must therefore not round.
          */
         suspend fun compute(
             total: Money,
@@ -47,9 +51,16 @@ data class CashChange(
             val changeRaw = (tenderedRaw - total.amount.toBigDecimal()).max(BigDecimal.ZERO)
             val changeInSale = Money(changeRaw.round().toDouble(), saleCurrency)
 
-            val givenRaw = convertOrNull(Money(changeRaw.toDouble(), saleCurrency), changeCurrency, convert)
+            val givenRaw = convertOrNull(
+                Money(changeRaw.toDouble(), saleCurrency),
+                changeCurrency,
+                convert,
+            )
             val fellBack = givenRaw == null
-            val changeGiven = Money((givenRaw ?: changeRaw).round().toDouble(), if (fellBack) saleCurrency else changeCurrency)
+            val changeGiven = Money(
+                (givenRaw ?: changeRaw).round().toDouble(),
+                if (fellBack) saleCurrency else changeCurrency,
+            )
 
             return CashChange(
                 tendered = tendered,
