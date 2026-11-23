@@ -224,21 +224,7 @@ fun PaymentFlow(
             convertCurrency = convertCurrency,
             onResult = { result ->
                 when (result) {
-                    is CashResult.Completed -> {
-                        val tendered = result.tenderedAmount
-                        finish(
-                            PaymentOutcome.CashCompleted(
-                                tenderedAmount = tendered,
-                                // Change is worked out against what is owed, never
-                                // taken from the dialog: the tender may have been
-                                // given in another currency.
-                                changeAmount = Money(
-                                    amount = maxOf(tendered.amount - amount.amount, 0.0),
-                                    currency = amount.currency,
-                                ),
-                            )
-                        )
-                    }
+                    is CashResult.Completed -> finish(result.change.toOutcome())
                     is CashResult.Cancelled -> finish(PaymentOutcome.Cancelled)
                 }
             },
@@ -298,9 +284,18 @@ sealed class PaymentOutcome {
         val assetAmount: String,
     ) : PaymentOutcome()
 
+    /**
+     * A cash sale.
+     *
+     * @property tenderedAmount what was handed over, in the currency it was handed over in.
+     * @property changeAmount the change in the bill's currency, correctly converted.
+     * @property changeGiven the change actually handed back, in the currency the cashier chose
+     *           (the bill's currency when there was no rate for the one chosen).
+     */
     data class CashCompleted(
         val tenderedAmount: Money,
         val changeAmount: Money,
+        val changeGiven: Money = changeAmount,
     ) : PaymentOutcome()
 
     data class Failed(val message: String) : PaymentOutcome()

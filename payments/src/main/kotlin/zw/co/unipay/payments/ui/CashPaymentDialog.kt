@@ -18,7 +18,7 @@ import zw.co.unipay.payments.model.TenderCurrency
 import zw.co.unipay.payments.model.Money
 
 internal sealed class CashResult {
-    data class Completed(val tenderedAmount: Money) : CashResult()
+    data class Completed(val change: CashChange) : CashResult()
     object Cancelled : CashResult()
 }
 
@@ -40,24 +40,23 @@ internal fun CashPaymentDialog(
 
     val tendered = tenderedText.toDoubleOrNull() ?: 0.0
 
-    var tenderedInBase by remember { mutableDoubleStateOf(0.0) }
-    LaunchedEffect(tendered, tenderedCurrency) {
-        tenderedInBase = when {
-            tendered <= 0 -> 0.0
-            tenderedCurrency == baseCurrency -> tendered
-            else -> convertCurrency(Money(tendered, tenderedCurrency), baseCurrency)?.amount ?: 0.0
+    // Everything on screen comes from CashChange.compute, the same code that
+    // produces the recorded outcome. Null while the tender is empty, short, or
+    // cannot be valued.
+    var cash by remember { mutableStateOf<CashChange?>(null) }
+    // The tender in the sale's currency, for the shortfall line when cash is null.
+    var tenderedInBase by remember { mutableStateOf<Double?>(null) }
+    LaunchedEffect(tendered, tenderedCurrency, changeCurrency) {
+        if (tendered <= 0) {
+            cash = null
+            tenderedInBase = null
+            return@LaunchedEffect
         }
-    }
-
-    val changeInBase = tenderedInBase - total.amount
-
-    var changeDisplay by remember { mutableStateOf<Money?>(null) }
-    LaunchedEffect(changeInBase, changeCurrency) {
-        changeDisplay = when {
-            changeInBase <= 0 -> null
-            changeCurrency == baseCurrency -> Money(changeInBase, baseCurrency)
-            else -> convertCurrency(Money(changeInBase, baseCurrency), changeCurrency)
-        }
+        val money = Money(tendered, tenderedCurrency)
+        cash = CashChange.compute(total, money, changeCurrency, convertCurrency)
+        tenderedInBase = cash?.tenderedInSale?.amount
+            ?: if (tenderedCurrency == baseCurrency) tendered
+            else convertCurrency(money, baseCurrency)?.amount
     }
 
     PaymentScreenSurface(
@@ -97,20 +96,33 @@ internal fun CashPaymentDialog(
                 }
 
                 // Show equivalent in base currency
-                if (tenderedCurrency != baseCurrency && tendered > 0 && tenderedInBase > 0) {
-                    Text("= $baseCurrency ${"%.2f".format(tenderedInBase)}", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val converted = tenderedInBase
+                if (tenderedCurrency != baseCurrency && tendered > 0) {
+                    if (converted != null) {
+                        Text("= $baseCurrency ${"%.2f".format(converted)}", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text("No rate for $tenderedCurrency", fontSize = 16.sp, color = MaterialTheme.colorScheme.error)
+                    }
                 }
 
                 // Change or shortfall
+                val current = cash
                 if (tendered > 0) {
-                    if (changeInBase >= 0) {
+                    if (current != null) {
                         Text(
-                            "Change: $baseCurrency ${"%.2f".format(changeInBase)}",
+                            "Change: ${current.changeGiven.format()}",
                             fontWeight = FontWeight.Bold,
                             fontSize = 22.sp,
                             color = MaterialTheme.colorScheme.primary
                         )
-                        if (changeInBase > 0) {
+                        if (current.changeCurrencyFellBack) {
+                            Text(
+                                "No rate for $changeCurrency: change in $baseCurrency",
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        if (current.changeInSale.amount > 0) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -124,14 +136,11 @@ internal fun CashPaymentDialog(
                                     label = { it.code },
                                     onSelect = { changeCurrency = it },
                                 )
-                                if (changeCurrency != baseCurrency && changeDisplay != null) {
-                                    Text("= ${changeDisplay!!.format()}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 18.sp)
-                                }
                             }
                         }
-                    } else {
+                    } else if (converted != null) {
                         Text(
-                            "Short: $baseCurrency ${"%.2f".format(-changeInBase)}",
+                            "Short: $baseCurrency ${"%.2f".format((total.amount - converted).coerceAtLeast(0.0))}",
                             fontWeight = FontWeight.Bold,
                             fontSize = 22.sp,
                             color = MaterialTheme.colorScheme.error
@@ -150,8 +159,8 @@ internal fun CashPaymentDialog(
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Cancel", fontSize = 18.sp) }
                     Button(
-                        onClick = { onResult(CashResult.Completed(Money(tendered, tenderedCurrency))); onDismiss() },
-                        enabled = changeInBase >= 0 && tendered > 0,
+                        onClick = { cash?.let { onResult(CashResult.Completed(it)); onDismiss() } },
+                        enabled = cash != null,
                         modifier = Modifier.weight(1f).height(56.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Complete", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
